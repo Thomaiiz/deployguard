@@ -38,6 +38,13 @@ services:
       Monitoring__AllowHttp: "true"
       Monitoring__AllowedPorts__0: "443"
       Monitoring__AllowedPorts__1: "8080"
+      # Alertas: a URL do webhook é segredo e vem só do .env. Vazia = alertas desligados
+      # (os incidentes continuam sendo registrados).
+      Alerting__FailureThreshold: ${ALERT_FAILURE_THRESHOLD:-2}
+      Alerting__DashboardBaseUrl: http://localhost:8080
+      Alerting__Webhooks__0__Name: principal
+      Alerting__Webhooks__0__Url: ${ALERT_WEBHOOK_URL:-}
+      Alerting__Webhooks__0__Format: ${ALERT_WEBHOOK_FORMAT:-Slack}
       # Só confia em X-Forwarded-For vindo da rede interna (onde está o nginx).
       ReverseProxy__KnownNetworks__0: 172.28.0.0/24
     networks: [backend, frontend]
