@@ -1,3 +1,4 @@
+using DeployGuard.Api.Alerting;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Monitoring;
 using DeployGuard.Tests.TestDoubles;
@@ -25,6 +26,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public FakeHealthChecker HealthChecker { get; } = new();
 
+    public FakeAlertSender AlertSender { get; } = new();
+
     protected virtual int WriteRequestsPerMinute => 1_000;
 
     public async Task InitializeAsync()
@@ -32,7 +35,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         var baseConnection = Environment.GetEnvironmentVariable("DEPLOYGUARD_TEST_CONNECTION");
         if (string.IsNullOrEmpty(baseConnection))
         {
-            _container = new PostgreSqlBuilder().WithImage("postgres:17-alpine").Build();
+            _container = new PostgreSqlBuilder("postgres:17-alpine").Build();
             await _container.StartAsync();
             baseConnection = _container.GetConnectionString();
         }
@@ -54,11 +57,19 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Monitoring:MaxApplications", "5");
         builder.UseSetting("RateLimiting:WriteRequestsPerMinute", WriteRequestsPerMinute.ToString());
         builder.UseSetting("RateLimiting:ReadRequestsPerMinute", "1000");
+        builder.UseSetting("Alerting:DispatcherEnabled", "false");
+        builder.UseSetting("Alerting:FailureThreshold", "2");
+        builder.UseSetting("Alerting:MaxDeliveryAttempts", "2");
+        builder.UseSetting("Alerting:Webhooks:0:Name", "plantao");
+        builder.UseSetting("Alerting:Webhooks:0:Url", "https://hooks.example.com/services/test");
+        builder.UseSetting("Alerting:Webhooks:0:Format", "Slack");
 
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<IHealthChecker>();
             services.AddSingleton<IHealthChecker>(HealthChecker);
+            services.RemoveAll<IAlertSender>();
+            services.AddSingleton<IAlertSender>(AlertSender);
         });
     }
 
@@ -70,6 +81,16 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public HealthCheckScheduler Scheduler => Services.GetRequiredService<HealthCheckScheduler>();
 
+    public AlertDispatcher Dispatcher => Services.GetRequiredService<AlertDispatcher>();
+
+    /// <summary>Faz todas as aplicações (e alertas pendentes) ficarem "vencidos" agora.</summary>
+    public Task MakeEverythingDueAsync() => WithDbAsync(async db =>
+    {
+        var past = DateTimeOffset.UtcNow.AddSeconds(-1);
+        await db.Applications.ExecuteUpdateAsync(s => s.SetProperty(a => a.NextCheckAt, past));
+        await db.AlertNotifications.ExecuteUpdateAsync(s => s.SetProperty(n => n.NextAttemptAt, past));
+    });
+
     async Task IAsyncLifetime.DisposeAsync()
     {
         await WithDbAsync(db => db.Database.EnsureDeletedAsync());
@@ -80,6 +101,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         }
     }
 }
+
+public sealed class IncidentApiFactory : ApiFactory;
 
 public sealed class StrictRateLimitApiFactory : ApiFactory
 {

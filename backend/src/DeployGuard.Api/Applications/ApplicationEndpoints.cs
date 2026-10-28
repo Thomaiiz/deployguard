@@ -26,8 +26,12 @@ public static class ApplicationEndpoints
     {
         var apps = await db.Applications.AsNoTracking().OrderBy(a => a.Name).ToListAsync(ct);
         var availability = await AvailabilityQueries.Last24hByApplicationAsync(db, time.GetUtcNow(), ct);
+        var openIncidents = await db.Incidents.AsNoTracking()
+            .Where(i => i.ResolvedAt == null)
+            .ToDictionaryAsync(i => i.ApplicationId, i => i.StartedAt, ct);
 
-        return Results.Ok(apps.Select(a => ApplicationResponse.From(a, availability.GetValueOrDefault(a.Id))));
+        return Results.Ok(apps.Select(a => ApplicationResponse.From(
+            a, availability.GetValueOrDefault(a.Id), openIncidents.TryGetValue(a.Id, out var since) ? since : null)));
     }
 
     private static async Task<IResult> GetAsync(Guid id, DeployGuardDbContext db, TimeProvider time, CancellationToken ct)
@@ -39,7 +43,12 @@ public static class ApplicationEndpoints
         }
 
         var availability = await AvailabilityQueries.Last24hByApplicationAsync(db, time.GetUtcNow(), ct, id);
-        return Results.Ok(ApplicationResponse.From(app, availability.GetValueOrDefault(id)));
+        var openSince = await db.Incidents.AsNoTracking()
+            .Where(i => i.ApplicationId == id && i.ResolvedAt == null)
+            .Select(i => (DateTimeOffset?)i.StartedAt)
+            .FirstOrDefaultAsync(ct);
+
+        return Results.Ok(ApplicationResponse.From(app, availability.GetValueOrDefault(id), openSince));
     }
 
     private static async Task<IResult> CreateAsync(
@@ -122,6 +131,7 @@ public static class ApplicationEndpoints
             app.LastStatus = null;
             app.LastLatencyMs = null;
             app.LastCheckedAt = null;
+            app.ConsecutiveFailures = 0;
             app.NextCheckAt = time.GetUtcNow();
         }
 

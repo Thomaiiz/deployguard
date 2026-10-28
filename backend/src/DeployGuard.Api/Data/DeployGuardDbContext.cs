@@ -9,6 +9,10 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
 
     public DbSet<HealthCheckResult> HealthCheckResults => Set<HealthCheckResult>();
 
+    public DbSet<Incident> Incidents => Set<Incident>();
+
+    public DbSet<AlertNotification> AlertNotifications => Set<AlertNotification>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<MonitoredApplication>(app =>
@@ -40,6 +44,45 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
             result.HasIndex(r => new { r.ApplicationId, r.CheckedAt }).IsDescending(false, true);
             // Usado pela limpeza de retenção (apaga resultados antigos).
             result.HasIndex(r => r.CheckedAt);
+        });
+
+        modelBuilder.Entity<Incident>(incident =>
+        {
+            incident.ToTable("incidents");
+            incident.HasKey(i => i.Id);
+            incident.Property(i => i.Cause).HasConversion<string>().HasMaxLength(32);
+            incident.Property(i => i.Summary).HasMaxLength(500);
+
+            incident.HasOne<MonitoredApplication>()
+                .WithMany()
+                .HasForeignKey(i => i.ApplicationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Índice único PARCIAL: no máximo um incidente aberto por aplicação.
+            // A regra de negócio vira garantia do banco, mesmo com bugs ou concorrência.
+            incident.HasIndex(i => i.ApplicationId)
+                .IsUnique()
+                .HasFilter("\"ResolvedAt\" IS NULL")
+                .HasDatabaseName("ux_incidents_one_open_per_application");
+
+            incident.HasIndex(i => new { i.ApplicationId, i.StartedAt }).IsDescending(false, true);
+        });
+
+        modelBuilder.Entity<AlertNotification>(notification =>
+        {
+            notification.ToTable("alert_notifications");
+            notification.HasKey(n => n.Id);
+            notification.Property(n => n.EventType).HasConversion<string>().HasMaxLength(32);
+            notification.Property(n => n.Channel).HasMaxLength(64);
+            notification.Property(n => n.LastError).HasMaxLength(500);
+
+            notification.HasOne(n => n.Incident)
+                .WithMany(i => i.Notifications)
+                .HasForeignKey(n => n.IncidentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // O dispatcher busca "pendentes cuja próxima tentativa já venceu".
+            notification.HasIndex(n => n.NextAttemptAt).HasFilter("\"SentAt\" IS NULL AND \"FailedAt\" IS NULL");
         });
     }
 }

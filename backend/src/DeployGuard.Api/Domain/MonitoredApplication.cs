@@ -26,5 +26,8 @@ public sealed class MonitoredApplication
 
     public int? LastLatencyMs { get; set; }
 
+    /// <summary>Falhas seguidas; zera na primeira verificação bem-sucedida.</summary>
+    public int ConsecutiveFailures { get; set; }
+
     public List<HealthCheckResult> Results { get; set; } = [];
 }

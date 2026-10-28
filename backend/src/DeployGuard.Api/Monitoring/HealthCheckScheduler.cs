@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using DeployGuard.Api.Alerting;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Domain;
 using Microsoft.EntityFrameworkCore;
@@ -14,7 +15,9 @@ namespace DeployGuard.Api.Monitoring;
 public sealed class HealthCheckScheduler(
     IServiceScopeFactory scopeFactory,
     IHealthChecker checker,
+    IncidentTracker incidentTracker,
     IOptionsMonitor<MonitoringOptions> options,
+    IOptionsMonitor<AlertingOptions> alertingOptions,
     TimeProvider time,
     ILogger<HealthCheckScheduler> logger) : BackgroundService
 {
@@ -80,10 +83,18 @@ public sealed class HealthCheckScheduler(
             outcomes[app.Id] = (outcome, checkedAt);
         });
 
-        // De volta a uma única thread: atualiza estado atual e grava o histórico numa só transação.
+        var dueIds = dueApps.Select(a => a.Id).ToList();
+        var openIncidents = await db.Incidents
+            .Where(i => dueIds.Contains(i.ApplicationId) && i.ResolvedAt == null)
+            .ToDictionaryAsync(i => i.ApplicationId, ct);
+        var channels = alertingOptions.CurrentValue.ActiveChannels;
+
+        // De volta a uma única thread: atualiza estado atual, histórico, incidentes e a
+        // caixa de saída de alertas numa só transação (tudo ou nada).
         foreach (var app in dueApps)
         {
             var (outcome, checkedAt) = outcomes[app.Id];
+            openIncidents.TryGetValue(app.Id, out var openIncident);
 
             db.HealthCheckResults.Add(new HealthCheckResult
             {
@@ -100,11 +111,52 @@ public sealed class HealthCheckScheduler(
             app.LastStatus = outcome.Status;
             app.LastLatencyMs = outcome.LatencyMs;
             app.NextCheckAt = checkedAt.AddSeconds(app.CheckIntervalSeconds);
+
+            var (failures, transition) = incidentTracker.Evaluate(app.ConsecutiveFailures, openIncident is not null, outcome);
+            app.ConsecutiveFailures = failures;
+
+            switch (transition)
+            {
+                case IncidentTransition.Open:
+                    var incident = new Incident
+                    {
+                        ApplicationId = app.Id,
+                        StartedAt = checkedAt,
+                        Cause = outcome.ErrorType,
+                        HttpStatusCode = outcome.HttpStatusCode,
+                        Summary = outcome.ErrorMessage,
+                    };
+                    db.Incidents.Add(incident);
+                    Enqueue(incident, AlertEventType.IncidentOpened, channels, checkedAt);
+                    logger.LogWarning("Incidente aberto para {Application} ({Cause}).", app.Name, outcome.ErrorType);
+                    break;
+
+                case IncidentTransition.Resolve:
+                    openIncident!.ResolvedAt = checkedAt;
+                    Enqueue(openIncident, AlertEventType.IncidentResolved, channels, checkedAt);
+                    logger.LogInformation("Incidente {Id} resolvido para {Application}.", openIncident.Id, app.Name);
+                    break;
+            }
         }
 
         await db.SaveChangesAsync(ct);
         logger.LogDebug("{Count} health checks executados.", dueApps.Count);
         return dueApps.Count;
+    }
+
+    private static void Enqueue(Incident incident, AlertEventType eventType, IReadOnlyList<WebhookChannelOptions> channels, DateTimeOffset now)
+    {
+        // Uma linha por canal: cada canal tem suas próprias tentativas e falhas.
+        foreach (var channel in channels)
+        {
+            incident.Notifications.Add(new AlertNotification
+            {
+                EventType = eventType,
+                Channel = channel.Name,
+                CreatedAt = now,
+                NextAttemptAt = now,
+            });
+        }
     }
 
     private async Task CleanupOldResultsAsync(CancellationToken ct)
