@@ -1,0 +1,49 @@
+<form class="card form" [formGroup]="form" (ngSubmit)="submit()" novalidate>
+  <h2>Nova aplicação</h2>
+
+  <label>
+    Nome
+    <input type="text" formControlName="name" maxlength="100" autocomplete="off" />
+    @if (showError('name')) {
+      <span class="field-error">Informe um nome com até 100 caracteres.</span>
+    }
+    @for (message of serverErrors()['name'] ?? []; track message) {
+      <span class="field-error">{{ message }}</span>
+    }
+  </label>
+
+  <label>
+    URL de health check
+    <input
+      type="url"
+      formControlName="healthCheckUrl"
+      placeholder="https://api.exemplo.com/health"
+      autocomplete="off"
+    />
+    @if (showError('healthCheckUrl')) {
+      <span class="field-error">Informe uma URL começando com https://.</span>
+    }
+    @for (message of serverErrors()['healthCheckUrl'] ?? []; track message) {
+      <span class="field-error" data-testid="url-error">{{ message }}</span>
+    }
+  </label>
+
+  <label>
+    Intervalo (segundos)
+    <input type="number" formControlName="checkIntervalSeconds" min="10" />
+    @if (showError('checkIntervalSeconds')) {
+      <span class="field-error">Intervalo inválido.</span>
+    }
+    @for (message of serverErrors()['checkIntervalSeconds'] ?? []; track message) {
+      <span class="field-error">{{ message }}</span>
+    }
+  </label>
+
+  @if (generalError(); as error) {
+    <p class="alert" role="alert">{{ error }}</p>
+  }
+
+  <button type="submit" class="btn" [disabled]="submitting()">
+    {{ submitting() ? 'Salvando…' : 'Cadastrar' }}
+  </button>
+</form>

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Princípio do menor privilégio: o token do workflow só pode ler o repositório.
+permissions:
+  contents: read
+
+# Um push novo no mesmo branch cancela a execução anterior.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (.NET)
+    runs-on: ubuntu-latest
+    services:
+      # PostgreSQL real para os testes de integração.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: deployguard
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U deployguard"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore
+      - run: dotnet build --no-restore -c Release
+      - name: Testes
+        run: dotnet test --no-build -c Release --logger "trx" --results-directory TestResults
+        env:
+          DEPLOYGUARD_TEST_CONNECTION: Host=localhost;Username=deployguard;Password=ci-only-password
+      - name: Pacotes com vulnerabilidades conhecidas
+        run: |
+          dotnet list package --vulnerable --include-transitive | tee vulnerable.txt
+          ! grep -q "has the following vulnerable packages" vulnerable.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: backend/TestResults
+
+  frontend:
+    name: Frontend (Angular)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run test:ci
+      - run: npm run build
+      - run: npm audit --audit-level=high
+
+  docker:
+    name: Imagens Docker
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build das imagens do compose
+        run: docker compose build
+        env:
+          POSTGRES_PASSWORD: ci-only-password

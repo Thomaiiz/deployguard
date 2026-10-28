@@ -1,0 +1,21 @@
+# Dependabot abre PRs semanais atualizando dependências (inclusive correções de segurança).
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /backend
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+    groups:
+      angular:
+        patterns: ["@angular/*", "@angular-devkit/*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /backend
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule: { interval: weekly }

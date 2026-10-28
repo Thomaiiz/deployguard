@@ -1,0 +1,83 @@
+# Sobe o DeployGuard completo: PostgreSQL + API + dashboard + uma aplicação de demonstração.
+# Uso: cp .env.example .env  (e troque a senha)  →  docker compose up --build
+name: deployguard
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: deployguard
+      POSTGRES_USER: deployguard
+      # ":?" faz o compose falhar se a variável não estiver definida: nada de senha padrão.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no arquivo .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deployguard -d deployguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+    # Sem "ports": o banco só é acessível pela rede interna do compose.
+
+  api:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DeployGuard: Host=db;Database=deployguard;Username=deployguard;Password=${POSTGRES_PASSWORD}
+      Database__MigrateOnStartup: "true"
+      # Allowlist de destinos. Ajuste no .env para os hosts que você quer monitorar.
+      Monitoring__AllowedHosts__0: ${MONITORING_ALLOWED_HOST_0:-*.github.com}
+      Monitoring__AllowedHosts__1: ${MONITORING_ALLOWED_HOST_1:-github.com}
+      Monitoring__AllowedHosts__2: ${MONITORING_ALLOWED_HOST_2:-example.com}
+      # Único destino privado autorizado: o serviço de demonstração abaixo.
+      Monitoring__AllowedPrivateHosts__0: demo-app
+      Monitoring__AllowHttp: "true"
+      Monitoring__AllowedPorts__0: "443"
+      Monitoring__AllowedPorts__1: "8080"
+      # Só confia em X-Forwarded-For vindo da rede interna (onde está o nginx).
+      ReverseProxy__KnownNetworks__0: 172.28.0.0/24
+    networks: [backend, frontend]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+
+  web:
+    build: ./frontend
+    depends_on: [api]
+    ports:
+      - "127.0.0.1:8080:8080" # só a máquina local acessa o dashboard
+    networks: [frontend]
+    security_opt: ["no-new-privileges:true"]
+
+  # Aplicação fictícia para ver o monitoramento funcionando sem depender da internet.
+  demo-app:
+    image: nginxinc/nginx-unprivileged:1.29-alpine
+    configs:
+      - source: demo-nginx
+        target: /etc/nginx/conf.d/default.conf
+    networks: [backend]
+
+configs:
+  demo-nginx:
+    content: |
+      server {
+        listen 8080;
+        location = /health { default_type application/json; return 200 '{"status":"ok"}'; }
+        location = /slow   { return 200 'ok'; }
+        location = /broken { return 503 'down'; }
+        location / { return 404; }
+      }
+
+networks:
+  backend:
+  frontend:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+volumes:
+  db-data:

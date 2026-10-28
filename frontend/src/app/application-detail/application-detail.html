@@ -1,0 +1,97 @@
+<a routerLink="/" class="back">← Voltar</a>
+
+@if (error(); as message) {
+  <p class="alert" role="alert">{{ message }}</p>
+}
+
+@if (app(); as app) {
+  <section class="page-header">
+    <div>
+      <h1>
+        {{ app.name }} <dg-status-badge [status]="app.lastStatus" [enabled]="app.isEnabled" />
+      </h1>
+      <p class="muted">
+        {{ app.healthCheckUrl }} · a cada {{ app.checkIntervalSeconds }} s · última verificação
+        {{ app.lastCheckedAt | relativeTime: now() }}
+      </p>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn btn--ghost" (click)="toggleEnabled(app)">
+        {{ app.isEnabled ? 'Pausar' : 'Retomar' }}
+      </button>
+      <button type="button" class="btn btn--danger" (click)="remove(app)">Remover</button>
+    </div>
+  </section>
+
+  @if (stats(); as s) {
+    <section class="summary" aria-label="Últimas 24 horas">
+      <div class="summary__item">
+        <span class="summary__value">{{
+          s.availabilityPercent !== null ? s.availabilityPercent + '%' : '—'
+        }}</span>
+        Disponibilidade 24h
+      </div>
+      <div class="summary__item">
+        <span class="summary__value">{{
+          s.averageLatencyMs !== null ? (s.averageLatencyMs | number: '1.0-0') + ' ms' : '—'
+        }}</span>
+        Latência média
+      </div>
+      <div class="summary__item">
+        <span class="summary__value">{{
+          s.p95LatencyMs !== null ? s.p95LatencyMs + ' ms' : '—'
+        }}</span>
+        Latência p95
+      </div>
+      <div class="summary__item">
+        <span class="summary__value">{{ s.totalChecks }}</span
+        >Verificações
+      </div>
+    </section>
+  }
+
+  <section class="card">
+    <h2>Latência recente</h2>
+    <dg-latency-chart [results]="checks()" />
+  </section>
+
+  <section class="card">
+    <div class="card__header">
+      <h2>Histórico</h2>
+      <button type="button" class="btn btn--ghost" (click)="reloadHistory()">Atualizar</button>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Quando</th>
+            <th>Status</th>
+            <th>HTTP</th>
+            <th>Latência</th>
+            <th>Erro</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (check of checks(); track check.id) {
+            <tr>
+              <td>{{ check.checkedAt | date: 'dd/MM HH:mm:ss' }}</td>
+              <td><dg-status-badge [status]="check.status" /></td>
+              <td>{{ check.httpStatusCode ?? '—' }}</td>
+              <td>{{ check.latencyMs }} ms</td>
+              <td [title]="check.errorMessage ?? ''">{{ errorLabels[check.errorType] }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="5" class="muted">Ainda não há verificações.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    @if (nextCursor()) {
+      <button type="button" class="btn btn--ghost" (click)="loadMore()">Carregar mais</button>
+    }
+  </section>
+} @else if (!error()) {
+  <p class="muted">Carregando…</p>
+}

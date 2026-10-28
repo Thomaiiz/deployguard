@@ -1,0 +1,363 @@
+/* Estilos globais: tokens de cor em variáveis CSS, com tema escuro automático. */
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --text: #1c2430;
+  --muted: #5f6b7a;
+  --border: #dde2e8;
+  --accent: #2f5bd3;
+  --up: #1f8a4c;
+  --up-bg: #e3f4ea;
+  --degraded: #9a6700;
+  --degraded-bg: #fdf1d6;
+  --down: #c22f2f;
+  --down-bg: #fbe4e4;
+  --neutral-bg: #eceff3;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151b;
+    --surface: #1a2029;
+    --text: #e6eaf0;
+    --muted: #97a3b3;
+    --border: #2b3340;
+    --accent: #7c9bff;
+    --up: #5fd38f;
+    --up-bg: #173524;
+    --degraded: #f2c45a;
+    --degraded-bg: #3a2f12;
+    --down: #ff7b7b;
+    --down-bg: #3d1a1a;
+    --neutral-bg: #262d38;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+h1 {
+  font-size: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+h2 {
+  font-size: 1.05rem;
+}
+a {
+  color: var(--accent);
+}
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.9rem 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text);
+  text-decoration: none;
+}
+.brand__mark {
+  color: var(--accent);
+}
+.topbar__tag {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+.muted {
+  color: var(--muted);
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.back {
+  display: inline-block;
+  margin-bottom: 1rem;
+  text-decoration: none;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn {
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.5rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.btn--ghost {
+  background: transparent;
+  color: var(--accent);
+}
+.btn--danger {
+  background: transparent;
+  color: var(--down);
+  border-color: var(--down);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+.card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.card h2 {
+  margin-bottom: 0.75rem;
+}
+.card__header h2 {
+  margin-bottom: 0;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.summary__item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.summary__value {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.summary__item--up .summary__value {
+  color: var(--up);
+}
+.summary__item--degraded .summary__value {
+  color: var(--degraded);
+}
+.summary__item--down .summary__value {
+  color: var(--down);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--neutral-bg);
+  color: var(--muted);
+}
+.badge--up {
+  background: var(--up-bg);
+  color: var(--up);
+}
+.badge--degraded {
+  background: var(--degraded-bg);
+  color: var(--degraded);
+}
+.badge--down {
+  background: var(--down-bg);
+  color: var(--down);
+}
+
+.app-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+.app-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.15s;
+}
+.app-card:hover {
+  border-color: var(--accent);
+}
+.app-card--paused {
+  opacity: 0.7;
+}
+.app-card__link {
+  display: block;
+  padding: 1rem 1.25rem;
+  color: inherit;
+  text-decoration: none;
+}
+.app-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+.app-card__url {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.35rem 0 0.9rem;
+  overflow-wrap: anywhere;
+}
+.app-card__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+}
+.app-card__metrics dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.app-card__metrics dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.form {
+  display: grid;
+  gap: 0.9rem;
+  max-width: 560px;
+}
+.form label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.form input {
+  font: inherit;
+  padding: 0.5rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.field-error {
+  color: var(--down);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.alert {
+  background: var(--down-bg);
+  color: var(--down);
+  border-radius: 8px;
+  padding: 0.65rem 0.9rem;
+  margin: 0 0 1rem;
+}
+.empty {
+  text-align: center;
+  padding: 2.5rem 1rem;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+td {
+  font-variant-numeric: tabular-nums;
+}
+
+.chart {
+  width: 100%;
+  height: 140px;
+  display: block;
+}
+.chart__line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.chart__dot--up {
+  fill: var(--up);
+}
+.chart__dot--degraded {
+  fill: var(--degraded);
+}
+.chart__dot--down {
+  fill: var(--down);
+}
+.chart__legend {
+  font-size: 0.8rem;
+}

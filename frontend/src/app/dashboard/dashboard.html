@@ -1,0 +1,79 @@
+<section class="page-header">
+  <div>
+    <h1>Aplicações</h1>
+    <p class="muted">Atualização automática a cada 15 segundos.</p>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn btn--ghost" (click)="refresh()">Atualizar</button>
+    <button type="button" class="btn" (click)="showForm.set(!showForm())">
+      {{ showForm() ? 'Fechar' : 'Nova aplicação' }}
+    </button>
+  </div>
+</section>
+
+@if (showForm()) {
+  <dg-register-application-form (registered)="onRegistered()" />
+}
+
+<section class="summary" aria-label="Resumo">
+  <div class="summary__item">
+    <span class="summary__value">{{ summary().total }}</span
+    >Total
+  </div>
+  <div class="summary__item summary__item--up">
+    <span class="summary__value">{{ summary().up }}</span
+    >Operacionais
+  </div>
+  <div class="summary__item summary__item--degraded">
+    <span class="summary__value">{{ summary().degraded }}</span
+    >Degradadas
+  </div>
+  <div class="summary__item summary__item--down">
+    <span class="summary__value">{{ summary().down }}</span
+    >Fora do ar
+  </div>
+</section>
+
+@if (loadError(); as error) {
+  <p class="alert" role="alert">{{ error }}</p>
+}
+
+@if (loading()) {
+  <p class="muted">Carregando…</p>
+} @else if (applications().length === 0) {
+  <div class="empty">
+    <p>Nenhuma aplicação cadastrada ainda.</p>
+    <button type="button" class="btn" (click)="showForm.set(true)">Cadastrar a primeira</button>
+  </div>
+} @else {
+  <ul class="app-grid">
+    @for (app of applications(); track app.id) {
+      <li class="app-card" [class.app-card--paused]="!app.isEnabled" data-testid="app-card">
+        <a [routerLink]="['/applications', app.id]" class="app-card__link">
+          <div class="app-card__header">
+            <h2>{{ app.name }}</h2>
+            <dg-status-badge [status]="app.lastStatus" [enabled]="app.isEnabled" />
+          </div>
+          <!-- Interpolação {{ }} sempre escapa HTML: proteção nativa do Angular contra XSS. -->
+          <p class="app-card__url">{{ app.healthCheckUrl }}</p>
+          <dl class="app-card__metrics">
+            <div>
+              <dt>Latência</dt>
+              <dd>{{ app.lastLatencyMs !== null ? app.lastLatencyMs + ' ms' : '—' }}</dd>
+            </div>
+            <div>
+              <dt>Disponib. 24h</dt>
+              <dd>
+                {{ app.availability24hPercent !== null ? app.availability24hPercent + '%' : '—' }}
+              </dd>
+            </div>
+            <div>
+              <dt>Última verificação</dt>
+              <dd>{{ app.lastCheckedAt | relativeTime: now() }}</dd>
+            </div>
+          </dl>
+        </a>
+      </li>
+    }
+  </ul>
+}
