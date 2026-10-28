@@ -18,7 +18,7 @@ public sealed record AlertMessage(
     {
         if (EventType == AlertEventType.IncidentOpened)
         {
-            return $"🔴 {ApplicationName} está FORA DO AR desde {StartedAt:dd/MM HH:mm:ss} UTC. Causa: {Summary ?? Cause.ToString()}."
+            return $"🔴 {ApplicationName} está FORA DO AR desde {StartedAt:dd/MM HH:mm:ss} UTC. Causa: {(Summary ?? Cause.ToString()).TrimEnd('.')}."
                 + (DashboardUrl is null ? "" : $" {DashboardUrl}");
         }
 

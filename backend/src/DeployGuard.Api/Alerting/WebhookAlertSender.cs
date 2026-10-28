@@ -1,4 +1,5 @@
-using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
 
 namespace DeployGuard.Api.Alerting;
 
@@ -11,6 +12,8 @@ public interface IAlertSender
 public sealed class WebhookAlertSender(IHttpClientFactory httpClientFactory) : IAlertSender
 {
     public const string HttpClientName = "alert-webhooks";
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task SendAsync(WebhookChannelOptions channel, AlertMessage message, CancellationToken ct)
     {
@@ -34,8 +37,12 @@ public sealed class WebhookAlertSender(IHttpClientFactory httpClientFactory) : I
             },
         };
 
+        // Serializamos antes de enviar para mandar Content-Length em vez de "chunked":
+        // alguns receptores de webhook simples não aceitam transferência em partes.
+        using var content = new StringContent(JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8, "application/json");
+
         var client = httpClientFactory.CreateClient(HttpClientName);
-        using var response = await client.PostAsJsonAsync(channel.Url, payload, ct);
+        using var response = await client.PostAsync(channel.Url, content, ct);
 
         // Não incluímos a URL na exceção: ela é um segredo e acabaria em logs.
         if (!response.IsSuccessStatusCode)
