@@ -34,6 +34,26 @@
   </div>
 </section>
 
+@if (openIncidents().length > 0) {
+  <section class="incident-banner" role="status" data-testid="incident-banner">
+    <strong>
+      {{ openIncidents().length }}
+      {{ openIncidents().length === 1 ? 'incidente aberto' : 'incidentes abertos' }}
+    </strong>
+    <ul>
+      @for (incident of openIncidents(); track incident.id) {
+        <li>
+          <a [routerLink]="['/applications', incident.applicationId]">{{
+            incident.applicationName
+          }}</a>
+          fora do ar {{ incident.startedAt | relativeTime: now() }} ·
+          {{ incident.summary ?? incident.cause }}
+        </li>
+      }
+    </ul>
+  </section>
+}
+
 @if (loadError(); as error) {
   <p class="alert" role="alert">{{ error }}</p>
 }
@@ -56,6 +76,11 @@
           </div>
           <!-- Interpolação {{ }} sempre escapa HTML: proteção nativa do Angular contra XSS. -->
           <p class="app-card__url">{{ app.healthCheckUrl }}</p>
+          @if (app.openIncidentSince) {
+            <p class="app-card__incident">
+              Incidente aberto {{ app.openIncidentSince | relativeTime: now() }}
+            </p>
+          }
           <dl class="app-card__metrics">
             <div>
               <dt>Latência</dt>

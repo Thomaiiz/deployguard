@@ -51,6 +51,49 @@
   }
 
   <section class="card">
+    <h2>Incidentes</h2>
+    @if (incidents().length === 0) {
+      <p class="muted">Nenhum incidente registrado.</p>
+    } @else {
+      <div class="table-wrapper">
+        <table data-testid="incidents-table">
+          <thead>
+            <tr>
+              <th>Início</th>
+              <th>Fim</th>
+              <th>Duração</th>
+              <th>Causa</th>
+              <th>Alertas</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (incident of incidents(); track incident.id) {
+              <tr [class.row--open]="incident.isOpen">
+                <td>{{ incident.startedAt | date: 'dd/MM HH:mm:ss' }}</td>
+                <td>
+                  {{
+                    incident.isOpen
+                      ? 'em andamento'
+                      : (incident.resolvedAt | date: 'dd/MM HH:mm:ss')
+                  }}
+                </td>
+                <td>{{ incident.durationSeconds | duration }}</td>
+                <td [title]="incident.summary ?? ''">{{ errorLabels[incident.cause] }}</td>
+                <td>
+                  {{ incident.notificationsSent }} enviados
+                  @if (incident.notificationsFailed > 0) {
+                    · {{ incident.notificationsFailed }} falharam
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+
+  <section class="card">
     <h2>Latência recente</h2>
     <dg-latency-chart [results]="checks()" />
   </section>

@@ -3,7 +3,7 @@ import { provideRouter } from '@angular/router';
 import { of, throwError } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
 import { DeployGuardApi } from '../core/deployguard-api';
-import { MonitoredApplication } from '../core/models';
+import { Incident, MonitoredApplication } from '../core/models';
 import { Dashboard } from './dashboard';
 
 function app(overrides: Partial<MonitoredApplication>): MonitoredApplication {
@@ -18,6 +18,7 @@ function app(overrides: Partial<MonitoredApplication>): MonitoredApplication {
     lastStatus: 'Up',
     lastLatencyMs: 80,
     availability24hPercent: 100,
+    openIncidentSince: null,
     ...overrides,
   };
 }
@@ -25,7 +26,10 @@ function app(overrides: Partial<MonitoredApplication>): MonitoredApplication {
 async function setup(api: Partial<DeployGuardApi>) {
   TestBed.configureTestingModule({
     imports: [Dashboard],
-    providers: [provideRouter([]), { provide: DeployGuardApi, useValue: api }],
+    providers: [
+      provideRouter([]),
+      { provide: DeployGuardApi, useValue: { listIncidents: () => of([]), ...api } },
+    ],
   });
   const fixture = TestBed.createComponent(Dashboard);
   // O polling começa com timer(0): espera um ciclo do event loop e a renderização.
@@ -75,5 +79,42 @@ describe('Dashboard', () => {
     });
     expect(element.querySelector('img')).toBeNull();
     expect(element.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+
+  it('highlights open incidents with a banner and on the card', async () => {
+    const down = app({
+      name: 'Pagamentos',
+      lastStatus: 'Down',
+      openIncidentSince: new Date().toISOString(),
+    });
+    const incident: Incident = {
+      id: 1,
+      applicationId: down.id,
+      applicationName: 'Pagamentos',
+      startedAt: new Date().toISOString(),
+      resolvedAt: null,
+      isOpen: true,
+      durationSeconds: 60,
+      cause: 'Timeout',
+      httpStatusCode: null,
+      summary: 'Sem resposta em 5s.',
+      notificationsSent: 1,
+      notificationsFailed: 0,
+    };
+
+    const element = await setup({
+      listApplications: () => of([down]),
+      listIncidents: () => of([incident]),
+    });
+
+    const banner = element.querySelector('[data-testid=incident-banner]');
+    expect(banner?.textContent).toContain('1 incidente aberto');
+    expect(banner?.textContent).toContain('Pagamentos');
+    expect(element.querySelector('.app-card__incident')?.textContent).toContain('Incidente aberto');
+  });
+
+  it('hides the banner when there are no incidents', async () => {
+    const element = await setup({ listApplications: () => of([app({})]) });
+    expect(element.querySelector('[data-testid=incident-banner]')).toBeNull();
   });
 });

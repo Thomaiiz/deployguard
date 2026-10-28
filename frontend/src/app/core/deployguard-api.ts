@@ -5,6 +5,8 @@ import {
   ApplicationStats,
   CreateApplicationRequest,
   HealthCheckPage,
+  Incident,
+  IncidentStatusFilter,
   MonitoredApplication,
   UpdateApplicationRequest,
 } from './models';
@@ -62,6 +64,18 @@ export class DeployGuardApi {
   getStats(id: string, hours = 24): Observable<ApplicationStats> {
     return this.http.get<ApplicationStats>(`${this.baseUrl}/${encodeURIComponent(id)}/stats`, {
       params: new HttpParams().set('hours', hours),
+    });
+  }
+
+  listIncidents(status: IncidentStatusFilter = 'All', limit = 50): Observable<Incident[]> {
+    return this.http.get<Incident[]>('/api/incidents', {
+      params: new HttpParams().set('status', status).set('limit', limit),
+    });
+  }
+
+  listApplicationIncidents(id: string, limit = 20): Observable<Incident[]> {
+    return this.http.get<Incident[]>(`${this.baseUrl}/${encodeURIComponent(id)}/incidents`, {
+      params: new HttpParams().set('limit', limit),
     });
   }
 }
