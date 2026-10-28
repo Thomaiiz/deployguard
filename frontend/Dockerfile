@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- Etapa 1: build do Angular ----
-FROM node:24-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 # npm ci instala exatamente o que está no package-lock.json (build reprodutível).
