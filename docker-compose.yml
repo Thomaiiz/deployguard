@@ -90,7 +90,7 @@ services:
 
   # Aplicação fictícia para ver o monitoramento funcionando sem depender da internet.
   demo-app:
-    image: nginxinc/nginx-unprivileged:1.29-alpine
+    image: nginxinc/nginx-unprivileged:1.31-alpine
     configs:
       - source: demo-nginx
         target: /etc/nginx/conf.d/default.conf
