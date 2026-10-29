@@ -54,6 +54,16 @@ services:
       Auth__JwtSigningKey: ${AUTH_JWT_KEY:?defina AUTH_JWT_KEY no .env (openssl rand -base64 48)}
       Auth__BootstrapAdminEmail: ${ADMIN_EMAIL:?defina ADMIN_EMAIL no .env}
       Auth__BootstrapAdminPassword: ${ADMIN_PASSWORD:?defina ADMIN_PASSWORD no .env}
+      # "Esqueci minha senha": o link do e-mail usa este endereço fixo (nunca o cabeçalho Host).
+      PasswordReset__DashboardBaseUrl: ${DASHBOARD_URL:-http://localhost:8080}
+      # E-mail: por padrão vai para o Mailpit abaixo (caixa de entrada de teste). Em produção,
+      # aponte para um SMTP de verdade com TLS (SMTP_SECURITY=StartTls) e usuário/senha no .env.
+      Email__SmtpHost: ${SMTP_HOST:-mailpit}
+      Email__SmtpPort: ${SMTP_PORT:-1025}
+      Email__Security: ${SMTP_SECURITY:-None}
+      Email__Username: ${SMTP_USERNAME:-}
+      Email__Password: ${SMTP_PASSWORD:-}
+      Email__FromAddress: ${SMTP_FROM:-deployguard@localhost}
       # Só confia em X-Forwarded-For vindo da rede interna (onde está o nginx).
       ReverseProxy__KnownNetworks__0: 172.28.0.0/24
     networks: [backend, frontend]
@@ -67,6 +77,15 @@ services:
     ports:
       - "127.0.0.1:8080:8080" # só a máquina local acessa o dashboard
     networks: [frontend]
+    security_opt: ["no-new-privileges:true"]
+
+  # Caixa de entrada de teste: recebe todo e-mail que a API manda e mostra numa página.
+  # Nada sai para a internet. Abra http://localhost:8025 para ver o link de "esqueci minha senha".
+  mailpit:
+    image: axllent/mailpit:v1.31.5
+    ports:
+      - "127.0.0.1:8025:8025" # interface web, só na máquina local
+    networks: [backend]
     security_opt: ["no-new-privileges:true"]
 
   # Aplicação fictícia para ver o monitoramento funcionando sem depender da internet.

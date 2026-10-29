@@ -14,6 +14,8 @@ public enum AuditAction
     ApplicationDeleted,
     ApiKeyCreated,
     ApiKeyRevoked,
+    PasswordResetRequested,
+    PasswordResetCompleted,
 }
 
 /// <summary>

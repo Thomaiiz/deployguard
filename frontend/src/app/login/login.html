@@ -20,6 +20,7 @@
     <button type="submit" class="btn" [disabled]="submitting()">
       {{ submitting() ? 'Entrando…' : 'Entrar' }}
     </button>
+    <a routerLink="/forgot-password" class="form__link">Esqueci minha senha</a>
   </form>
   <p class="muted login__status"><a routerLink="/status">Ver o status dos serviços</a></p>
 </section>

@@ -5,12 +5,22 @@ import { ApplicationDetail } from './application-detail/application-detail';
 import { Audit } from './audit/audit';
 import { adminGuard, authGuard, guestGuard } from './core/auth.guard';
 import { Dashboard } from './dashboard/dashboard';
+import { ForgotPassword } from './password-reset/forgot-password';
 import { Login } from './login/login';
+import { ResetPassword } from './password-reset/reset-password';
 import { Status } from './status/status';
 import { Users } from './users/users';
 
 export const routes: Routes = [
   { path: 'login', component: Login, canActivate: [guestGuard], title: 'DeployGuard · Entrar' },
+  {
+    path: 'forgot-password',
+    component: ForgotPassword,
+    canActivate: [guestGuard],
+    title: 'DeployGuard · Esqueci minha senha',
+  },
+  // Sem guard: o link do e-mail precisa abrir mesmo com outra sessão aberta no navegador.
+  { path: 'reset-password', component: ResetPassword, title: 'DeployGuard · Nova senha' },
   // Pública de propósito: fica fora do grupo com authGuard.
   { path: 'status', component: Status, title: 'Status dos serviços' },
   {

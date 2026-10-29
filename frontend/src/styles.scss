@@ -613,3 +613,13 @@ code {
   margin: 1rem 0 0;
   font-size: 0.9rem;
 }
+
+/* Links dentro dos formulários de login e recuperação de senha */
+.form__link {
+  justify-self: start;
+  font-size: 0.9rem;
+}
+a.btn {
+  text-decoration: none;
+  text-align: center;
+}
