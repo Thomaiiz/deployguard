@@ -12,6 +12,9 @@ namespace DeployGuard.Api.Alerting;
 /// Entrega "pelo menos uma vez" (at-least-once): se o processo cair entre enviar e
 /// gravar SentAt, a mensagem é reenviada. Duplicar um alerta é aceitável; perder, não.
 /// Falhas usam backoff exponencial: 30s, 1min, 2min, 4min... até o máximo de tentativas.
+///
+/// Com várias instâncias da API, cada notificação é reservada por uma instância só
+/// (FOR UPDATE SKIP LOCKED, igual ao agendador), então o Slack não recebe o alerta em dobro.
 /// </summary>
 public sealed class AlertDispatcher(
     IServiceScopeFactory scopeFactory,
@@ -54,17 +57,15 @@ public sealed class AlertDispatcher(
         var db = scope.ServiceProvider.GetRequiredService<DeployGuardDbContext>();
 
         var now = time.GetUtcNow();
-        var pending = await db.AlertNotifications
-            .Include(n => n.Incident)
-            .Where(n => n.SentAt == null && n.FailedAt == null && n.NextAttemptAt <= now)
-            .OrderBy(n => n.NextAttemptAt)
-            .Take(BatchSize)
-            .ToListAsync(ct);
-
+        var pending = await ClaimPendingAsync(db, now, LeaseFor(settings), ct);
         if (pending.Count == 0)
         {
             return 0;
         }
+
+        // Carrega os incidentes das notificações reservadas; o EF liga cada um à sua notificação.
+        var incidentIds = pending.Select(n => n.IncidentId).Distinct().ToList();
+        await db.Incidents.Where(i => incidentIds.Contains(i.Id)).LoadAsync(ct);
 
         var applicationIds = pending.Select(n => n.Incident!.ApplicationId).Distinct().ToList();
         var names = await db.Applications
@@ -138,6 +139,31 @@ public sealed class AlertDispatcher(
         await db.SaveChangesAsync(ct);
         return sent;
     }
+
+    /// <summary>
+    /// Reserva até <see cref="BatchSize"/> notificações vencidas num único UPDATE atômico, empurrando
+    /// NextAttemptAt para o fim do prazo. Se a instância cair antes de gravar o resultado, o prazo
+    /// vence e outra instância tenta de novo (por isso a entrega é "pelo menos uma vez").
+    /// </summary>
+    internal static Task<List<AlertNotification>> ClaimPendingAsync(
+        DeployGuardDbContext db, DateTimeOffset now, TimeSpan lease, CancellationToken ct)
+    {
+        var leaseUntil = now + lease;
+        return db.AlertNotifications.FromSql($"""
+            UPDATE alert_notifications SET "NextAttemptAt" = {leaseUntil}
+            WHERE "Id" IN (
+                SELECT "Id" FROM alert_notifications
+                WHERE "SentAt" IS NULL AND "FailedAt" IS NULL AND "NextAttemptAt" <= {now}
+                ORDER BY "NextAttemptAt"
+                LIMIT {BatchSize}
+                FOR UPDATE SKIP LOCKED)
+            RETURNING *
+            """).ToListAsync(ct);
+    }
+
+    /// <summary>Pior caso do lote: todos os webhooks batendo no timeout, mais uma folga.</summary>
+    internal static TimeSpan LeaseFor(AlertingOptions settings) =>
+        TimeSpan.FromSeconds(BatchSize * settings.WebhookTimeoutSeconds + 60);
 
     internal static TimeSpan Backoff(int attempts)
     {

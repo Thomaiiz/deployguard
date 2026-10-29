@@ -146,8 +146,17 @@ public static class AuthSetup
             .HashPassword(user, settings.BootstrapAdminPassword);
 
         db.Users.Add(user);
-        await db.SaveChangesAsync();
-        logger.LogInformation("Admin inicial {Email} criado.", email);
+        try
+        {
+            await db.SaveChangesAsync();
+            logger.LogInformation("Admin inicial {Email} criado.", email);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: Npgsql.PostgresErrorCodes.UniqueViolation })
+        {
+            // Duas instâncias subindo juntas: as duas viram "nenhum usuário", e só uma consegue
+            // gravar (o e-mail é único). Para a outra, o admin já existe e está tudo certo.
+            logger.LogInformation("Admin inicial já foi criado por outra instância.");
+        }
     }
 }
 

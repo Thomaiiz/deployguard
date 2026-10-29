@@ -61,7 +61,7 @@ public static class DeploymentEndpoints
         CreateDeploymentRequest request,
         ClaimsPrincipal principal,
         DeployGuardDbContext db,
-        LiveEventHub liveEvents,
+        LiveEventBus liveEvents,
         TimeProvider time,
         CancellationToken ct)
     {
@@ -90,8 +90,13 @@ public static class DeploymentEndpoints
         };
 
         db.Deployments.Add(deployment);
-        await db.SaveChangesAsync(ct);
-        liveEvents.Publish(new LiveEvent(LiveEventType.DeploymentRegistered, id, deployment.DeployedAt, Version: deployment.Version));
+        await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+        {
+            await db.SaveChangesAsync(ct);
+            await liveEvents.PublishAsync(db,
+                [new LiveEvent(LiveEventType.DeploymentRegistered, id, deployment.DeployedAt, Version: deployment.Version)], ct);
+            await transaction.CommitAsync(ct);
+        }
 
         return Results.Created($"/api/applications/{id}/deployments", ToResponse(deployment, app.Name));
     }

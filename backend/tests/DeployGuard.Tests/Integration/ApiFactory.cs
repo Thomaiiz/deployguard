@@ -33,6 +33,9 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public const string AdminEmail = "admin@example.com";
     public const string AdminPassword = "frase-secreta-de-teste-2026";
 
+    /// <summary>Conexão do banco desta factory (cada factory tem um banco próprio).</summary>
+    public string ConnectionString => _connectionString;
+
     protected virtual int WriteRequestsPerMinute => 1_000;
 
     protected virtual int LoginRequestsPerMinute => 1_000;
@@ -158,5 +161,17 @@ public sealed class LiveApiFactory : ApiFactory
     {
         base.ConfigureWebHost(builder);
         builder.UseSetting("Live:MaxConnections", "2");
+    }
+}
+
+/// <summary>Lotes pequenos (2 verificações x 4 ondas) para várias instâncias dividirem o trabalho.</summary>
+public sealed class MultiInstanceApiFactory : ApiFactory
+{
+    protected override int MaxApplications => 50;
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.UseSetting("Monitoring:MaxConcurrentChecks", "2");
     }
 }

@@ -10,8 +10,11 @@ namespace DeployGuard.Api.Monitoring;
 
 /// <summary>
 /// Serviço em segundo plano (BackgroundService) que roda dentro do próprio processo da API.
-/// A cada "tick" busca as aplicações com verificação vencida, executa as verificações em
-/// paralelo (com limite de concorrência) e grava os resultados.
+/// A cada "tick" reserva um lote de aplicações com verificação vencida, executa as
+/// verificações em paralelo (com limite de concorrência) e grava os resultados.
+///
+/// Pode haver várias instâncias da API rodando ao mesmo tempo: a reserva com
+/// FOR UPDATE SKIP LOCKED garante que cada aplicação é verificada por uma instância só.
 /// </summary>
 public sealed class HealthCheckScheduler(
     IServiceScopeFactory scopeFactory,
@@ -19,11 +22,14 @@ public sealed class HealthCheckScheduler(
     IncidentTracker incidentTracker,
     IOptionsMonitor<MonitoringOptions> options,
     IOptionsMonitor<AlertingOptions> alertingOptions,
-    LiveEventHub liveEvents,
+    LiveEventBus liveEvents,
     TimeProvider time,
     ILogger<HealthCheckScheduler> logger) : BackgroundService
 {
     private static readonly TimeSpan CleanupEvery = TimeSpan.FromHours(1);
+
+    /// <summary>Lote reservado por vez: o bastante para 4 "ondas" de verificações paralelas.</summary>
+    private const int WavesPerBatch = 4;
     private DateTimeOffset _lastCleanup = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -52,22 +58,74 @@ public sealed class HealthCheckScheduler(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    /// <summary>Executa uma rodada. Público para ser chamado diretamente nos testes.</summary>
+    /// <summary>
+    /// Executa uma rodada: processa lotes até não sobrar aplicação vencida.
+    /// Público para ser chamado diretamente nos testes.
+    /// </summary>
     public async Task<int> RunDueChecksAsync(CancellationToken ct)
+    {
+        var total = 0;
+        int processed;
+        do
+        {
+            processed = await RunBatchAsync(ct);
+            total += processed;
+        }
+        while (processed > 0 && !ct.IsCancellationRequested);
+
+        if (total > 0)
+        {
+            logger.LogInformation("{Count} health checks executados nesta instância.", total);
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Reserva aplicações vencidas de forma atômica, num único UPDATE:
+    /// <list type="bullet">
+    /// <item>FOR UPDATE SKIP LOCKED: se outra instância está reservando as mesmas linhas
+    /// neste instante, elas são puladas em vez de esperar. Cada linha vai para uma instância só.</item>
+    /// <item>A reserva empurra NextCheckAt para o fim de um "prazo" (lease). Para as outras
+    /// instâncias, a aplicação deixa de estar vencida. Ao terminar, gravamos o NextCheckAt certo.</item>
+    /// <item>Se a instância cair no meio, o prazo vence e outra instância pega a aplicação.
+    /// Nada fica preso para sempre, e nenhuma trava fica aberta durante as chamadas HTTP.</item>
+    /// </list>
+    /// </summary>
+    internal static Task<List<MonitoredApplication>> ClaimDueAsync(
+        DeployGuardDbContext db, DateTimeOffset now, int limit, TimeSpan lease, CancellationToken ct)
+    {
+        var leaseUntil = now + lease;
+        return db.Applications.FromSql($"""
+            UPDATE applications SET "NextCheckAt" = {leaseUntil}
+            WHERE "Id" IN (
+                SELECT "Id" FROM applications
+                WHERE "IsEnabled" AND "NextCheckAt" <= {now}
+                ORDER BY "NextCheckAt"
+                LIMIT {limit}
+                FOR UPDATE SKIP LOCKED)
+            RETURNING *
+            """).ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// Prazo da reserva: o pior caso de um lote (todas as ondas batendo no timeout), em dobro,
+    /// mais uma folga. Calculado a partir da configuração para não haver um número a mais para errar.
+    /// </summary>
+    internal static TimeSpan LeaseFor(MonitoringOptions settings) =>
+        TimeSpan.FromSeconds(WavesPerBatch * settings.RequestTimeoutSeconds * 2 + 60);
+
+    private async Task<int> RunBatchAsync(CancellationToken ct)
     {
         var settings = options.CurrentValue;
 
         // DbContext é "scoped" e não é thread-safe; o BackgroundService é singleton,
-        // então criamos um escopo por rodada.
+        // então criamos um escopo por lote.
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DeployGuardDbContext>();
 
-        var now = time.GetUtcNow();
-        var dueApps = await db.Applications
-            .Where(a => a.IsEnabled && a.NextCheckAt <= now)
-            .OrderBy(a => a.NextCheckAt)
-            .Take(settings.MaxApplications)
-            .ToListAsync(ct);
+        var dueApps = await ClaimDueAsync(db, time.GetUtcNow(),
+            settings.MaxConcurrentChecks * WavesPerBatch, LeaseFor(settings), ct);
 
         if (dueApps.Count == 0)
         {
@@ -145,12 +203,12 @@ public sealed class HealthCheckScheduler(
             }
         }
 
+        // Os avisos ao vivo vão na MESMA transação: o PostgreSQL só entrega um NOTIFY quando a
+        // transação é confirmada. Quem receber o aviso e consultar a API já encontra os dados.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await db.SaveChangesAsync(ct);
-
-        // Avisa o dashboard só DEPOIS de gravar: quem receber o aviso e consultar a API
-        // já encontra os dados novos.
-        events.ForEach(liveEvents.Publish);
-        logger.LogDebug("{Count} health checks executados.", dueApps.Count);
+        await liveEvents.PublishAsync(db, events, ct);
+        await transaction.CommitAsync(ct);
         return dueApps.Count;
     }
 
