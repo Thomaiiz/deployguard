@@ -619,6 +619,42 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
   primeiro no limite de 5 logins por minuto por IP ("Muitas requisições"). Era a primeira camada
   funcionando. Para testar a segunda, subi a API local com um limite maior.
 
+## Etapa 14 (oitava fase): página de status pública
+
+### O que mudou
+
+- `applications` ganhou a coluna `IsPublic` (falso por padrão).
+- Rota nova `GET /api/public/status`, sem login, com output cache de 30 s e rate limit próprio.
+- No Angular: página `/status` (fora do `authGuard`), botão **Publicar na página de status** na
+  tela da aplicação e link "Status" no topo e na tela de login.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `dotnet ef migrations add AddPublicStatusPage` | Gera a migration que adiciona `IsPublic` em `applications`. |
+| `curl -i http://localhost:8080/api/public/status` | Chama a rota sem cookie, como um visitante. O `-i` mostra os cabeçalhos, incluindo `Cache-Control: public, max-age=30`. |
+| `("CheckedAt" AT TIME ZONE 'UTC')::date` | (SQL) Converte o horário para UTC e fica só com a data. É a chave do `GROUP BY` por dia. |
+| `count(*) FILTER (WHERE "Status" <> 'Down')` | (SQL) Conta só as linhas que passam no filtro, dentro do mesmo `GROUP BY`. |
+
+### Conceitos
+
+- **Superfície pública mínima.** Tudo o que uma rota anônima devolve está na internet. Por isso ela
+  tem um DTO próprio, bem menor que o da área logada: sem `Id`, sem URL, sem latência e sem
+  mensagem de erro. Uma mensagem como `connect 10.0.0.5:443 timed out` revelaria a rede interna.
+- **Opt-in.** Nada é público até o Admin decidir. O padrão seguro é "fechado".
+- **Output cache.** O ASP.NET Core guarda a resposta pronta em memória por 30 s. Mil visitantes no
+  mesmo minuto viram duas consultas ao banco, não mil. Respostas para usuários logados não entram
+  no cache (é o comportamento padrão, para não servir dado de um usuário a outro).
+- **`Cache-Control: public, max-age=30`.** Diz ao navegador (e a uma CDN, se houver) que pode
+  reaproveitar a resposta por 30 s. O resto da API manda `no-store`.
+- **Status não é o mesmo que último resultado.** Uma falha isolada vira "Instável". "Fora do ar"
+  só com incidente aberto, que exige várias falhas seguidas. Isso evita alarmar clientes à toa.
+- **Polling em vez de SSE.** O canal ao vivo exige login. Como a resposta tem cache de 30 s,
+  atualizar a cada minuto não pesa.
+- **Datas em UTC.** O servidor agrupa por dia em UTC para todo mundo ver as mesmas barras,
+  independentemente do fuso.
+
 ---
 
 ## Perguntas de entrevista
@@ -761,3 +797,7 @@ Vão logins, bloqueios, troca de senha e alterações de usuários, aplicações
 quando e o IP. Nunca vão senhas, chaves ou tokens. O registro é gravado na mesma transação da ação
 e não pode ser editado pela API.
 
+**Como você expôs dados sem login com segurança?**
+Com uma rota pública separada, com DTO próprio e mínimo (sem ids, URLs ou erros), publicação
+opt-in por aplicação, rate limit próprio e output cache de 30 s, para que muitos acessos não virem
+muitas consultas pesadas no banco.

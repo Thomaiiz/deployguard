@@ -11,6 +11,7 @@ public static class RateLimitingSetup
     public const string ReadPolicy = "api-read";
     public const string WritePolicy = "api-write";
     public const string LoginPolicy = "auth-login";
+    public const string PublicPolicy = "public-status";
 
     public static IServiceCollection AddApiRateLimiting(this IServiceCollection services, IConfiguration configuration)
     {
@@ -18,6 +19,8 @@ public static class RateLimitingSetup
         var writePerMinute = configuration.GetValue("RateLimiting:WriteRequestsPerMinute", 20);
         // Login bem mais restrito: freia ataques de força bruta e de "credential stuffing".
         var loginPerMinute = configuration.GetValue("RateLimiting:LoginRequestsPerMinute", 5);
+        // Página de status: aberta para qualquer um, então tem cota própria (menor que a de leitura).
+        var publicPerMinute = configuration.GetValue("RateLimiting:PublicRequestsPerMinute", 30);
 
         services.AddRateLimiter(limiter =>
         {
@@ -26,6 +29,7 @@ public static class RateLimitingSetup
             limiter.AddPolicy(ReadPolicy, ctx => FixedWindowByClientIp(ctx, readPerMinute));
             limiter.AddPolicy(WritePolicy, ctx => FixedWindowByClientIp(ctx, writePerMinute));
             limiter.AddPolicy(LoginPolicy, ctx => FixedWindowByClientIp(ctx, loginPerMinute));
+            limiter.AddPolicy(PublicPolicy, ctx => FixedWindowByClientIp(ctx, publicPerMinute));
 
             limiter.OnRejected = (ctx, _) =>
             {

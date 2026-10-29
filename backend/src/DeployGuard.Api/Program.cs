@@ -9,6 +9,7 @@ using DeployGuard.Api.Incidents;
 using DeployGuard.Api.Infrastructure;
 using DeployGuard.Api.Live;
 using DeployGuard.Api.Monitoring;
+using DeployGuard.Api.StatusPage;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 
@@ -44,6 +45,16 @@ builder.Services.AddOptions<DeploymentOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+builder.Services.AddOptions<StatusPageOptions>()
+    .Bind(builder.Configuration.GetSection(StatusPageOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// Cache de resposta em memória (por réplica). Só a página de status pública usa:
+// muitos visitantes ao mesmo tempo viram uma consulta ao banco a cada N segundos.
+builder.Services.AddOutputCache(cache => cache.AddPolicy(PublicStatusEndpoints.CachePolicy, policy => policy
+    .Expire(TimeSpan.FromSeconds(builder.Configuration.GetValue($"{StatusPageOptions.SectionName}:CacheSeconds", 30)))));
+
 builder.Services.ConfigureHttpJsonOptions(json =>
     json.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
@@ -74,6 +85,7 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseApiSecurityHeaders();
 app.UseRateLimiter();
+app.UseOutputCache();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -104,6 +116,7 @@ api.MapHistoryEndpoints();
 api.MapIncidentEndpoints();
 api.MapDeploymentEndpoints();
 api.MapLiveEndpoints();
+api.MapPublicStatusEndpoints(app.Configuration);
 
 app.Run();
 

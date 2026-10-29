@@ -6,10 +6,13 @@ import { Audit } from './audit/audit';
 import { adminGuard, authGuard, guestGuard } from './core/auth.guard';
 import { Dashboard } from './dashboard/dashboard';
 import { Login } from './login/login';
+import { Status } from './status/status';
 import { Users } from './users/users';
 
 export const routes: Routes = [
   { path: 'login', component: Login, canActivate: [guestGuard], title: 'DeployGuard · Entrar' },
+  // Pública de propósito: fica fora do grupo com authGuard.
+  { path: 'status', component: Status, title: 'Status dos serviços' },
   {
     path: '',
     canActivateChild: [authGuard], // tudo daqui para baixo exige login

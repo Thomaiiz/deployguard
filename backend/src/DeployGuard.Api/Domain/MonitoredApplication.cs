@@ -13,6 +13,12 @@ public sealed class MonitoredApplication
 
     public bool IsEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Aparece na página de status pública (sem login). Desligado por padrão: publicar
+    /// é uma decisão explícita do Admin, e só o nome e a situação ficam visíveis.
+    /// </summary>
+    public bool IsPublic { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
 
     /// <summary>Quando o agendador deve verificar esta aplicação de novo.</summary>

@@ -18,6 +18,7 @@ export interface MonitoredApplication {
   healthCheckUrl: string;
   checkIntervalSeconds: number;
   isEnabled: boolean;
+  isPublic: boolean;
   createdAt: string;
   lastCheckedAt: string | null;
   lastStatus: CheckStatus | null;
@@ -37,6 +38,7 @@ export interface UpdateApplicationRequest {
   healthCheckUrl?: string;
   checkIntervalSeconds?: number;
   isEnabled?: boolean;
+  isPublic?: boolean;
 }
 
 export interface HealthCheckResult {
@@ -212,4 +214,29 @@ export interface LiveMessage {
   name: LiveEventName;
   /** null no "ready", que só avisa que a conexão abriu. */
   event: LiveEvent | null;
+}
+
+/** Situação de um serviço na página de status pública. */
+export type ComponentStatus = 'Operational' | 'Degraded' | 'Outage' | 'Unknown';
+
+export interface DailyAvailability {
+  date: string; // yyyy-MM-dd, em UTC
+  availabilityPercent: number | null;
+}
+
+/** Só o que qualquer visitante pode ver: sem id, URL, latência ou erro. */
+export interface PublicComponent {
+  name: string;
+  status: ComponentStatus;
+  availabilityPercent: number | null;
+  incidentSince: string | null;
+  days: DailyAvailability[];
+}
+
+export interface PublicStatus {
+  title: string;
+  overall: ComponentStatus;
+  generatedAt: string;
+  historyDays: number;
+  components: PublicComponent[];
 }
