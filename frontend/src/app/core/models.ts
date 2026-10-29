@@ -23,6 +23,7 @@ export interface MonitoredApplication {
   lastStatus: CheckStatus | null;
   lastLatencyMs: number | null;
   availability24hPercent: number | null;
+  openIncidentSince: string | null;
 }
 
 export interface CreateApplicationRequest {
@@ -73,3 +74,20 @@ export interface ProblemDetails {
   status?: number;
   errors?: Record<string, string[]>;
 }
+
+export interface Incident {
+  id: number;
+  applicationId: string;
+  applicationName: string;
+  startedAt: string;
+  resolvedAt: string | null;
+  isOpen: boolean;
+  durationSeconds: number;
+  cause: CheckErrorType;
+  httpStatusCode: number | null;
+  summary: string | null;
+  notificationsSent: number;
+  notificationsFailed: number;
+}
+
+export type IncidentStatusFilter = 'All' | 'Open' | 'Resolved';

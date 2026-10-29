@@ -4,8 +4,14 @@ import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { Router, RouterLink } from '@angular/router';
 import { EMPTY, catchError, combineLatest, switchMap, timer } from 'rxjs';
 import { DeployGuardApi } from '../core/deployguard-api';
-import { ApplicationStats, HealthCheckResult, MonitoredApplication } from '../core/models';
+import {
+  ApplicationStats,
+  HealthCheckResult,
+  Incident,
+  MonitoredApplication,
+} from '../core/models';
 import { errorMessage } from '../core/problem-details';
+import { DurationPipe } from '../shared/duration.pipe';
 import { ERROR_LABELS } from '../shared/error-labels';
 import { RelativeTimePipe } from '../shared/relative-time.pipe';
 import { StatusBadge } from '../shared/status-badge';
@@ -16,7 +22,15 @@ const PAGE_SIZE = 50;
 
 @Component({
   selector: 'dg-application-detail',
-  imports: [RouterLink, DatePipe, DecimalPipe, StatusBadge, RelativeTimePipe, LatencyChart],
+  imports: [
+    RouterLink,
+    DatePipe,
+    DecimalPipe,
+    StatusBadge,
+    RelativeTimePipe,
+    DurationPipe,
+    LatencyChart,
+  ],
   templateUrl: './application-detail.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -29,6 +43,7 @@ export class ApplicationDetail {
 
   protected readonly app = signal<MonitoredApplication | null>(null);
   protected readonly stats = signal<ApplicationStats | null>(null);
+  protected readonly incidents = signal<Incident[]>([]);
   protected readonly checks = signal<HealthCheckResult[]>([]);
   protected readonly nextCursor = signal<string | null>(null);
   protected readonly error = signal<string | null>(null);
@@ -42,7 +57,11 @@ export class ApplicationDetail {
         switchMap((id) =>
           timer(0, REFRESH_MS).pipe(
             switchMap(() =>
-              combineLatest([this.api.getApplication(id), this.api.getStats(id)]).pipe(
+              combineLatest([
+                this.api.getApplication(id),
+                this.api.getStats(id),
+                this.api.listApplicationIncidents(id),
+              ]).pipe(
                 catchError((err) => {
                   this.error.set(errorMessage(err));
                   return EMPTY;
@@ -53,9 +72,10 @@ export class ApplicationDetail {
         ),
         takeUntilDestroyed(),
       )
-      .subscribe(([app, stats]) => {
+      .subscribe(([app, stats, incidents]) => {
         this.app.set(app);
         this.stats.set(stats);
+        this.incidents.set(incidents);
         this.error.set(null);
         this.now.set(Date.now());
       });

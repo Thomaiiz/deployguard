@@ -2,9 +2,13 @@
 
 Plataforma de monitoramento de aplicações e investigação de incidentes.
 
-Esta é a **primeira etapa**: cadastrar aplicações com uma URL de health check, verificá-las
-periodicamente de forma segura, registrar disponibilidade, latência e erros, expor o histórico
-por uma API REST e mostrar o estado de cada aplicação num dashboard.
+Funcionalidades atuais:
+
+- **Etapa 1:** cadastrar aplicações com uma URL de health check, verificá-las periodicamente de
+  forma segura, registrar disponibilidade, latência e erros, expor o histórico por uma API REST e
+  mostrar o estado de cada aplicação num dashboard.
+- **Etapa 2:** abrir e fechar **incidentes** automaticamente quando uma aplicação cai e volta, e
+  **alertar** o time por webhook (Slack, Discord ou JSON genérico), com entrega confiável.
 
 | Camada | Tecnologia |
 |---|---|
@@ -56,6 +60,11 @@ cadastre a aplicação de demonstração que sobe junto:
 | Demo quebrado | `http://demo-app:8080/broken` | Fora do ar (HTTP 503) |
 | Teste de SSRF | `http://169.254.169.254:8080/` | Rejeitado no cadastro |
 
+Para receber alertas, coloque no `.env` a URL de um
+[Incoming Webhook do Slack](https://api.slack.com/messaging/webhooks) ou de um webhook do Discord
+(`ALERT_WEBHOOK_URL` e `ALERT_WEBHOOK_FORMAT`). Sem isso, os incidentes aparecem no dashboard, mas
+nenhuma mensagem é enviada.
+
 Só o dashboard é publicado, e apenas em `127.0.0.1:8080`. API e banco ficam acessíveis só pela
 rede interna do Compose.
 
@@ -95,6 +104,7 @@ flowchart LR
             endpoints[Endpoints REST<br/>+ rate limiting]
             scheduler[HealthCheckScheduler<br/>BackgroundService]
             checker[HealthChecker<br/>+ SafeSocketConnector]
+            dispatcher[AlertDispatcher<br/>BackgroundService]
         end
         db[(PostgreSQL)]
         demo[demo-app]
@@ -106,6 +116,8 @@ flowchart LR
     scheduler --> checker
     checker -->|GET health check| demo
     checker -->|GET health check| internet((Hosts autorizados<br/>na internet))
+    dispatcher --> db
+    dispatcher -->|POST webhook| chat((Slack / Discord))
 ```
 
 ### Fluxo de uma verificação
@@ -119,14 +131,40 @@ flowchart LR
    IPs são públicos e conecta exatamente nesses IPs.
 5. A resposta vira um `HealthCheckOutcome`: `Up` (2xx), `Degraded` (2xx lento) ou `Down` (qualquer
    outra coisa, com a categoria do erro).
-6. O agendador grava todos os resultados e atualiza o estado atual de cada aplicação numa única
+6. O `IncidentTracker` decide se a verificação abre ou fecha um incidente (veja abaixo).
+7. O agendador grava resultados, estado atual, incidentes e notificações pendentes numa única
    transação, e agenda a próxima verificação para `agora + intervalo`.
+
+### Incidentes e alertas
+
+```mermaid
+stateDiagram-v2
+    [*] --> Saudavel
+    Saudavel --> Saudavel: falhas < limiar
+    Saudavel --> IncidenteAberto: falhas consecutivas = limiar\n(enfileira alerta "caiu")
+    IncidenteAberto --> IncidenteAberto: continua falhando
+    IncidenteAberto --> Saudavel: primeira resposta 2xx\n(enfileira alerta "voltou")
+```
+
+- **Limiar de falhas** (`FailureThreshold`, padrão 2): uma falha isolada não vira alerta. Isso evita
+  *flapping*, alertas que abrem e fecham por instabilidade momentânea.
+- **Um incidente aberto por aplicação**, garantido por um índice único parcial no PostgreSQL
+  (`WHERE "ResolvedAt" IS NULL`).
+- **Transactional outbox:** o alerta não é enviado durante a verificação. Ele é gravado na tabela
+  `alert_notifications` na mesma transação do incidente. O `AlertDispatcher` lê essa tabela a cada
+  10 s e faz o `POST` no webhook. Se o Slack estiver fora do ar, o alerta não se perde nem trava as
+  verificações.
+- **Retentativas com backoff exponencial:** 30 s, 1 min, 2 min, 4 min... até `MaxDeliveryAttempts`.
+- **Entrega "pelo menos uma vez":** se o processo cair entre enviar e gravar, a mensagem é
+  reenviada. Um alerta duplicado é aceitável; um perdido, não.
 
 ### Modelo de dados
 
 ```mermaid
 erDiagram
     applications ||--o{ health_check_results : "tem"
+    applications ||--o{ incidents : "tem"
+    incidents ||--o{ alert_notifications : "gera"
     applications {
         uuid id PK
         varchar name
@@ -137,6 +175,25 @@ erDiagram
         timestamptz last_checked_at
         varchar last_status
         int last_latency_ms
+        int consecutive_failures
+    }
+    incidents {
+        bigint id PK
+        uuid application_id FK
+        timestamptz started_at
+        timestamptz resolved_at
+        varchar cause
+        varchar summary
+    }
+    alert_notifications {
+        bigint id PK
+        bigint incident_id FK
+        varchar event_type
+        varchar channel
+        int attempts
+        timestamptz next_attempt_at
+        timestamptz sent_at
+        timestamptz failed_at
     }
     health_check_results {
         bigint id PK
@@ -265,6 +322,8 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
 - Erros seguem Problem Details (RFC 9457) sem stack trace. Mensagens de falha de verificação são
   fixas, não a mensagem bruta da exceção.
 - Logs registram o host, não a URL completa (query strings podem carregar tokens).
+- **URLs de webhook são segredos** (quem tem a URL de um webhook do Slack pode postar no canal).
+  Vêm só de variável de ambiente, exigem `https` e nunca aparecem em logs nem em mensagens de erro.
 
 ### 6. Outras defesas
 
@@ -296,6 +355,8 @@ documento OpenAPI fica em `/openapi/v1.json`.
 | `DELETE` | `/applications/{id}` | Remove a aplicação e o histórico |
 | `GET` | `/applications/{id}/checks` | Histórico paginado. Query: `limit` (1 a 500), `cursor`, `from`, `to`, `status` |
 | `GET` | `/applications/{id}/stats` | Disponibilidade, latência média, p95, máxima e erros por tipo. Query: `hours` (1 a 168) |
+| `GET` | `/incidents` | Incidentes de todas as aplicações. Query: `status` (`All`, `Open`, `Resolved`), `limit` (até 200) |
+| `GET` | `/applications/{id}/incidents` | Incidentes de uma aplicação |
 | `GET` | `/health` | Liveness da própria API |
 
 Exemplos:
@@ -346,6 +407,12 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Monitoring:SchedulerTickSeconds` | `5` | Frequência do agendador |
 | `RateLimiting:ReadRequestsPerMinute` / `WriteRequestsPerMinute` | `120` / `20` | Limites por IP |
 | `ReverseProxy:KnownNetworks` | `[]` | Redes (CIDR) cujo `X-Forwarded-For` é confiável |
+| `Alerting:FailureThreshold` | `2` | Falhas consecutivas para abrir um incidente |
+| `Alerting:Webhooks` | `[]` | Lista de `{ Name, Url, Format }`. `Format`: `Slack`, `Discord` ou `Generic`. URL vazia = canal desligado |
+| `Alerting:MaxDeliveryAttempts` | `6` | Tentativas de entrega antes de desistir |
+| `Alerting:DispatchIntervalSeconds` | `10` | Frequência do dispatcher de alertas |
+| `Alerting:WebhookTimeoutSeconds` | `10` | Timeout de cada chamada ao webhook |
+| `Alerting:DashboardBaseUrl` | (vazio) | Se definido, a mensagem inclui um link para a aplicação |
 
 ---
 
@@ -362,7 +429,7 @@ cd frontend
 npm run test:ci
 ```
 
-**Backend (80 testes)**
+**Backend (95 testes)**
 
 - Unidade: `IpAddressGuard` (faixas privadas, IPv6, IPv4 mapeado), `UrlSafetyPolicy` (esquemas,
   credenciais, portas, curingas, IP literal), `SafeSocketConnector` (DNS rebinding, inclusive com um
@@ -371,9 +438,12 @@ npm run test:ci
 - Integração: a API inteira sobe em memória com `WebApplicationFactory` contra um PostgreSQL real.
   Cobre CRUD, validação, agendador gravando resultados, paginação por cursor, estatísticas, rate
   limiting (429), limite de aplicações e cabeçalhos de segurança.
+- Alertas: todas as transições do `IncidentTracker`, backoff, formato das mensagens e do JSON de
+  cada canal, ciclo de vida completo do incidente com o dispatcher, retentativas até desistir e o
+  índice que impede dois incidentes abertos.
 
-**Frontend (20 testes)**: serviço HTTP com `HttpTestingController`, dashboard (cards, resumo, estado
-vazio, erro de rede, escape de HTML), formulário (validação local e erros vindos da API), badge,
+**Frontend (24 testes)**: serviço HTTP com `HttpTestingController`, dashboard (cards, resumo, estado
+vazio, erro de rede, escape de HTML, banner de incidentes), formulário (validação local e erros vindos da API), badge,
 gráfico e pipe de tempo relativo.
 
 **GitHub Actions** (`.github/workflows/ci.yml`) roda em todo push e PR: build e testes do backend com
@@ -392,6 +462,8 @@ backend/
     Applications/     endpoints de cadastro, validação, DTOs
     Monitoring/       política de URL, guarda de IP, conector seguro, checker, agendador
     History/          endpoints de histórico e estatísticas, cursor de paginação
+    Incidents/        endpoints de incidentes
+    Alerting/         máquina de estados do incidente, outbox dispatcher, envio por webhook
     Infrastructure/   rate limiting e cabeçalhos de segurança
     Program.cs        composição da aplicação (DI e pipeline HTTP)
   tests/DeployGuard.Tests/
@@ -413,7 +485,7 @@ docker-compose.yml
 
 - **Autenticação e autorização** (ex.: OIDC com JWT na API e login no dashboard).
 - **Várias instâncias**: distribuir o agendamento (`FOR UPDATE SKIP LOCKED` ou worker separado).
-- **Alertas** quando uma aplicação muda de estado (e-mail, Slack, webhook).
+- **Mais canais de alerta** (e-mail, SMS) e regras por aplicação (quem avisar, horário de plantão).
 - **Tempo real** no dashboard com Server-Sent Events.
 - **Particionamento** da tabela de resultados por data, se o volume crescer.
 - **Validação do corpo** da resposta (ex.: exigir `"status":"ok"`) com limite de bytes lidos.

@@ -250,6 +250,57 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
 
 ---
 
+## Etapa 8 (segunda fase): incidentes e alertas
+
+### O que mudou
+
+- Duas tabelas novas: `incidents` (quando caiu, quando voltou, por quê) e `alert_notifications`
+  (a "caixa de saída" dos alertas).
+- `MonitoredApplication` ganhou `ConsecutiveFailures`.
+- O agendador, depois de cada verificação, pergunta ao `IncidentTracker` se deve abrir ou fechar um
+  incidente.
+- Um segundo `BackgroundService`, o `AlertDispatcher`, envia os alertas.
+- O dashboard ganhou um banner de incidentes abertos e uma tabela de incidentes no detalhe.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `dotnet ef migrations add AddIncidentsAndAlerts` | Gera a migration com as tabelas novas. Ela é aplicada sozinha quando a API sobe (`MigrateOnStartup`). |
+| `git checkout -b feature/alertas` | Cria um branch para a funcionalidade. O código entra na `main` só pelo Pull Request, depois de revisado. |
+
+### Conceitos
+
+- **Máquina de estados.** O incidente tem dois estados (saudável e incidente aberto) e transições
+  bem definidas. O `IncidentTracker` é uma função pura: recebe o estado atual e o resultado da
+  verificação e devolve o novo estado. Por não acessar banco nem rede, é trivial de testar.
+- **Limiar e flapping.** Redes falham por um instante o tempo todo. Se cada falha virasse alerta, o
+  time passaria a ignorar os alertas (*alert fatigue*). Exigir N falhas seguidas troca alguns segundos
+  de atraso por muito menos ruído.
+- **Índice único parcial.** `CREATE UNIQUE INDEX ... ON incidents ("ApplicationId") WHERE
+  "ResolvedAt" IS NULL`. Garante no banco que só existe um incidente aberto por aplicação, mesmo que o
+  código tenha um bug ou que duas instâncias rodem ao mesmo tempo. Regra importante vira restrição do
+  banco, não só `if` no código.
+- **Transactional outbox.** O problema: gravar o incidente no banco e enviar a mensagem para o Slack
+  são duas operações em sistemas diferentes, e não existe transação que cubra as duas. Se enviar
+  primeiro e o banco falhar, o alerta fala de algo que não existe. Se gravar e o Slack estiver fora,
+  o alerta se perde. A solução: gravar a *intenção* de enviar (a linha em `alert_notifications`) na
+  mesma transação do incidente. Um processo separado lê essa tabela e envia. É o mesmo padrão usado
+  para publicar eventos em filas (Kafka, RabbitMQ) em microsserviços.
+- **At-least-once vs. exactly-once.** Entregar exatamente uma vez entre sistemas é praticamente
+  impossível. Escolhemos "pelo menos uma vez": no pior caso, um alerta duplicado. Quem recebe pode
+  usar o `incidentId` para ignorar duplicatas (*idempotência*).
+- **Backoff exponencial.** Se o webhook falhou, tentar de novo imediatamente costuma falhar de novo
+  e sobrecarrega quem já está com problema. Dobrar a espera a cada tentativa (30 s, 1 min, 2 min...)
+  dá tempo para o serviço se recuperar, e um teto de tentativas evita tentar para sempre.
+- **Webhook.** É só um `POST` HTTP com JSON para uma URL que o outro sistema fornece. Slack espera
+  `{"text": "..."}`, Discord espera `{"content": "..."}`. O formato `Generic` manda todos os campos
+  para integrações próprias.
+- **`forkJoin` no Angular.** Dispara a busca de aplicações e de incidentes em paralelo e só atualiza
+  a tela quando as duas respostas chegam.
+
+---
+
 ## Perguntas de entrevista
 
 **Explique o projeto em 30 segundos.**
@@ -301,3 +352,20 @@ horário). Testcontainers dá um banco descartável e isolado por execução.
 **O que você faria a seguir?**
 Autenticação (OIDC/JWT), alertas na mudança de estado, Server-Sent Events no dashboard, distribuir o
 agendamento entre instâncias e, na visão do produto, OpenTelemetry e correlação com deploys.
+
+**Como você evita perder um alerta se o Slack estiver fora do ar?**
+Com o padrão transactional outbox: o alerta é gravado no banco na mesma transação do incidente, e um
+serviço separado envia com retentativas e backoff exponencial. A falha do Slack só atrasa o alerta.
+
+**E se o alerta for enviado duas vezes?**
+Pode acontecer (entrega "pelo menos uma vez"), e é uma escolha consciente: duplicar é melhor que
+perder. O `incidentId` no payload permite ao receptor descartar duplicatas.
+
+**Como você evita alertas falsos?**
+Com um limiar de falhas consecutivas antes de abrir o incidente, o que evita *flapping*. Também não
+considero "lento" (Degraded) como queda.
+
+**Como garante que não existem dois incidentes abertos para a mesma aplicação?**
+Além da lógica no código, um índice único parcial no PostgreSQL. Se algo der errado, o banco recusa a
+gravação.
+

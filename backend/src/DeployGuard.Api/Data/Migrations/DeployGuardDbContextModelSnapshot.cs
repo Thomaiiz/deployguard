@@ -22,6 +22,56 @@ namespace DeployGuard.Api.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("DeployGuard.Api.Domain.AlertNotification", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset?>("FailedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("IncidentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("SentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IncidentId");
+
+                    b.HasIndex("NextAttemptAt")
+                        .HasFilter("\"SentAt\" IS NULL AND \"FailedAt\" IS NULL");
+
+                    b.ToTable("alert_notifications", (string)null);
+                });
+
             modelBuilder.Entity("DeployGuard.Api.Domain.HealthCheckResult", b =>
                 {
                     b.Property<long>("Id")
@@ -66,6 +116,48 @@ namespace DeployGuard.Api.Data.Migrations
                     b.ToTable("health_check_results", (string)null);
                 });
 
+            modelBuilder.Entity("DeployGuard.Api.Domain.Incident", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<Guid>("ApplicationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Cause")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int?>("HttpStatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Summary")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApplicationId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_incidents_one_open_per_application")
+                        .HasFilter("\"ResolvedAt\" IS NULL");
+
+                    b.HasIndex("ApplicationId", "StartedAt")
+                        .IsDescending(false, true);
+
+                    b.ToTable("incidents", (string)null);
+                });
+
             modelBuilder.Entity("DeployGuard.Api.Domain.MonitoredApplication", b =>
                 {
                     b.Property<Guid>("Id")
@@ -73,6 +165,9 @@ namespace DeployGuard.Api.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<int>("CheckIntervalSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ConsecutiveFailures")
                         .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("CreatedAt")
@@ -111,6 +206,17 @@ namespace DeployGuard.Api.Data.Migrations
                     b.ToTable("applications", (string)null);
                 });
 
+            modelBuilder.Entity("DeployGuard.Api.Domain.AlertNotification", b =>
+                {
+                    b.HasOne("DeployGuard.Api.Domain.Incident", "Incident")
+                        .WithMany("Notifications")
+                        .HasForeignKey("IncidentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Incident");
+                });
+
             modelBuilder.Entity("DeployGuard.Api.Domain.HealthCheckResult", b =>
                 {
                     b.HasOne("DeployGuard.Api.Domain.MonitoredApplication", null)
@@ -118,6 +224,20 @@ namespace DeployGuard.Api.Data.Migrations
                         .HasForeignKey("ApplicationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("DeployGuard.Api.Domain.Incident", b =>
+                {
+                    b.HasOne("DeployGuard.Api.Domain.MonitoredApplication", null)
+                        .WithMany()
+                        .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeployGuard.Api.Domain.Incident", b =>
+                {
+                    b.Navigation("Notifications");
                 });
 
             modelBuilder.Entity("DeployGuard.Api.Domain.MonitoredApplication", b =>

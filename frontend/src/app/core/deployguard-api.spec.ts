@@ -57,4 +57,12 @@ describe('DeployGuardApi', () => {
     expect(request.request.body.name).toBe('A');
     request.flush({});
   });
+
+  it('filters incidents by status', () => {
+    api.listIncidents('Open').subscribe();
+
+    const request = http.expectOne((r) => r.url === '/api/incidents');
+    expect(request.request.params.get('status')).toBe('Open');
+    request.flush([]);
+  });
 });

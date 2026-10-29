@@ -1,7 +1,9 @@
 using System.Text.Json.Serialization;
+using DeployGuard.Api.Alerting;
 using DeployGuard.Api.Applications;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.History;
+using DeployGuard.Api.Incidents;
 using DeployGuard.Api.Infrastructure;
 using DeployGuard.Api.Monitoring;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -22,6 +24,7 @@ builder.Services.AddDbContext<DeployGuardDbContext>(options => options.UseNpgsql
 builder.Services.AddSingleton(TimeProvider.System);
 
 builder.Services.AddMonitoring(builder.Configuration);
+builder.Services.AddAlerting(builder.Configuration);
 builder.Services.AddSingleton<ApplicationValidator>();
 builder.Services.AddApiRateLimiting(builder.Configuration);
 
@@ -74,6 +77,7 @@ app.MapHealthChecks("/health");
 var api = app.MapGroup("/api").RequireRateLimiting(RateLimitingSetup.ReadPolicy);
 api.MapApplicationEndpoints();
 api.MapHistoryEndpoints();
+api.MapIncidentEndpoints();
 
 app.Run();
 

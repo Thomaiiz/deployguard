@@ -19,9 +19,10 @@ public sealed record ApplicationResponse(
     DateTimeOffset? LastCheckedAt,
     CheckStatus? LastStatus,
     int? LastLatencyMs,
-    double? Availability24hPercent)
+    double? Availability24hPercent,
+    DateTimeOffset? OpenIncidentSince)
 {
-    public static ApplicationResponse From(MonitoredApplication app, double? availability24h) => new(
+    public static ApplicationResponse From(MonitoredApplication app, double? availability24h, DateTimeOffset? openIncidentSince = null) => new(
         app.Id,
         app.Name,
         app.HealthCheckUrl,
@@ -31,5 +32,6 @@ public sealed record ApplicationResponse(
         app.LastCheckedAt,
         app.LastStatus,
         app.LastLatencyMs,
-        availability24h);
+        availability24h,
+        openIncidentSince);
 }
