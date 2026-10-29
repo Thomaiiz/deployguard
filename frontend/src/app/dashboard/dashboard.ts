@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { EMPTY, Subject, catchError, forkJoin, merge, switchMap, timer } from 'rxjs';
+import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
 import { Incident, MonitoredApplication } from '../core/models';
 import { errorMessage } from '../core/problem-details';
@@ -20,6 +21,7 @@ export const DASHBOARD_REFRESH_MS = 15_000;
 export class Dashboard {
   private readonly api = inject(DeployGuardApi);
   private readonly refresh$ = new Subject<void>();
+  protected readonly auth = inject(AuthService);
 
   // Signals: valores reativos. Quando mudam, o Angular atualiza só o que depende deles.
   protected readonly applications = signal<MonitoredApplication[]>([]);

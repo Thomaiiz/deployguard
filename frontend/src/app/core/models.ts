@@ -91,3 +91,22 @@ export interface Incident {
 }
 
 export type IncidentStatusFilter = 'All' | 'Open' | 'Resolved';
+
+export type UserRole = 'Admin' | 'Viewer';
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  role: UserRole;
+}
+
+export interface User extends CurrentUser {
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface CreateUserRequest {
+  email: string;
+  password: string;
+  role: UserRole;
+}

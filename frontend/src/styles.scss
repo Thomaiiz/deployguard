@@ -91,6 +91,13 @@ a {
   color: var(--muted);
   font-size: 0.85rem;
 }
+.topbar__user {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  font-size: 0.85rem;
+}
 
 .container {
   max-width: 1100px;
@@ -286,7 +293,8 @@ a {
   font-size: 0.9rem;
   font-weight: 500;
 }
-.form input {
+.form input,
+.form select {
   font: inherit;
   padding: 0.5rem 0.65rem;
   border-radius: 6px;
@@ -387,4 +395,18 @@ td {
 .row--open td {
   color: var(--down);
   font-weight: 600;
+}
+
+.login {
+  display: grid;
+  place-items: center;
+  padding-top: 3rem;
+}
+.login .form {
+  width: 100%;
+  max-width: 380px;
+}
+.card.form + .alert,
+.card.form + .card {
+  margin-top: 1rem;
 }

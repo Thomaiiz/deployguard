@@ -4,11 +4,13 @@ import { Observable } from 'rxjs';
 import {
   ApplicationStats,
   CreateApplicationRequest,
+  CreateUserRequest,
   HealthCheckPage,
   Incident,
   IncidentStatusFilter,
   MonitoredApplication,
   UpdateApplicationRequest,
+  User,
 } from './models';
 
 /**
@@ -77,5 +79,17 @@ export class DeployGuardApi {
     return this.http.get<Incident[]>(`${this.baseUrl}/${encodeURIComponent(id)}/incidents`, {
       params: new HttpParams().set('limit', limit),
     });
+  }
+
+  listUsers(): Observable<User[]> {
+    return this.http.get<User[]>('/api/users');
+  }
+
+  createUser(request: CreateUserRequest): Observable<User> {
+    return this.http.post<User>('/api/users', request);
+  }
+
+  deleteUser(id: string): Observable<void> {
+    return this.http.delete<void>(`/api/users/${encodeURIComponent(id)}`);
   }
 }

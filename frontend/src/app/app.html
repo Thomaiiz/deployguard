@@ -3,6 +3,15 @@
     <span class="brand__mark" aria-hidden="true">◆</span> DeployGuard
   </a>
   <span class="topbar__tag">Monitoramento de aplicações</span>
+  @if (auth.user(); as user) {
+    <nav class="topbar__user">
+      @if (auth.isAdmin()) {
+        <a routerLink="/users">Usuários</a>
+      }
+      <span class="muted" data-testid="current-user">{{ user.email }} · {{ user.role }}</span>
+      <button type="button" class="btn btn--ghost" (click)="logout()">Sair</button>
+    </nav>
+  }
 </header>
 <main class="container">
   <router-outlet />

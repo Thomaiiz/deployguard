@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, effect, inject, input, signal } fro
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { Router, RouterLink } from '@angular/router';
 import { EMPTY, catchError, combineLatest, switchMap, timer } from 'rxjs';
+import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
 import {
   ApplicationStats,
@@ -37,6 +38,7 @@ const PAGE_SIZE = 50;
 export class ApplicationDetail {
   private readonly api = inject(DeployGuardApi);
   private readonly router = inject(Router);
+  protected readonly auth = inject(AuthService);
 
   /** Preenchido pelo router a partir de /applications/:id (withComponentInputBinding). */
   readonly id = input.required<string>();
