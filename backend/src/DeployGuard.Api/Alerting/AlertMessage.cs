@@ -1,3 +1,4 @@
+using DeployGuard.Api.Deployments;
 using DeployGuard.Api.Domain;
 
 namespace DeployGuard.Api.Alerting;
@@ -12,13 +13,15 @@ public sealed record AlertMessage(
     DateTimeOffset? ResolvedAt,
     CheckErrorType Cause,
     string? Summary,
-    string? DashboardUrl)
+    string? DashboardUrl,
+    SuspectedDeployment? SuspectedDeployment = null)
 {
     public string Text()
     {
         if (EventType == AlertEventType.IncidentOpened)
         {
             return $"🔴 {ApplicationName} está FORA DO AR desde {StartedAt:dd/MM HH:mm:ss} UTC. Causa: {(Summary ?? Cause.ToString()).TrimEnd('.')}."
+                + (SuspectedDeployment is { } d ? $" Último deploy: {d.Version}, {DeployAgo(d.MinutesBeforeIncident)}." : "")
                 + (DashboardUrl is null ? "" : $" {DashboardUrl}");
         }
 
@@ -26,6 +29,8 @@ public sealed record AlertMessage(
         return $"✅ {ApplicationName} voltou ao ar. Ficou indisponível por {FormatDuration(duration)}."
             + (DashboardUrl is null ? "" : $" {DashboardUrl}");
     }
+
+    private static string DeployAgo(int minutes) => minutes < 1 ? "menos de 1 min antes" : $"{minutes} min antes";
 
     internal static string FormatDuration(TimeSpan duration) => duration.TotalMinutes < 1
         ? $"{(int)duration.TotalSeconds}s"

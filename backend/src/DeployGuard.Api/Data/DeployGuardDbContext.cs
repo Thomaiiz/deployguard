@@ -15,6 +15,10 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
 
     public DbSet<User> Users => Set<User>();
 
+    public DbSet<Deployment> Deployments => Set<Deployment>();
+
+    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(user =>
@@ -25,6 +29,36 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
             user.Property(u => u.PasswordHash).HasMaxLength(512).IsRequired();
             user.Property(u => u.Role).HasConversion<string>().HasMaxLength(16);
             user.HasIndex(u => u.Email).IsUnique();
+        });
+
+        modelBuilder.Entity<Deployment>(deployment =>
+        {
+            deployment.ToTable("deployments");
+            deployment.HasKey(d => d.Id);
+            deployment.Property(d => d.Version).HasMaxLength(100).IsRequired();
+            deployment.Property(d => d.CommitSha).HasMaxLength(40);
+            deployment.Property(d => d.Description).HasMaxLength(500);
+            deployment.Property(d => d.Url).HasMaxLength(2048);
+            deployment.Property(d => d.RegisteredBy).HasMaxLength(300).IsRequired();
+
+            deployment.HasOne<MonitoredApplication>()
+                .WithMany()
+                .HasForeignKey(d => d.ApplicationId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Atende "últimos deploys da aplicação" e "deploy logo antes do incidente".
+            deployment.HasIndex(d => new { d.ApplicationId, d.DeployedAt });
+        });
+
+        modelBuilder.Entity<ApiKey>(key =>
+        {
+            key.ToTable("api_keys");
+            key.HasKey(k => k.Id);
+            key.Property(k => k.Name).HasMaxLength(100).IsRequired();
+            key.Property(k => k.Prefix).HasMaxLength(16).IsRequired();
+            key.Property(k => k.KeyHash).HasMaxLength(64).IsRequired();
+            key.Property(k => k.CreatedBy).HasMaxLength(254).IsRequired();
+            key.HasIndex(k => k.KeyHash).IsUnique(); // a autenticação busca pela chave já "hasheada"
         });
 
         modelBuilder.Entity<MonitoredApplication>(app =>

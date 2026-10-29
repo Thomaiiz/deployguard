@@ -1,6 +1,8 @@
 using DeployGuard.Api.Data;
+using DeployGuard.Api.Deployments;
 using DeployGuard.Api.Domain;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace DeployGuard.Api.Incidents;
 
@@ -16,7 +18,8 @@ public sealed record IncidentResponse(
     int? HttpStatusCode,
     string? Summary,
     int NotificationsSent,
-    int NotificationsFailed);
+    int NotificationsFailed,
+    SuspectedDeployment? SuspectedDeployment);
 
 public enum IncidentStatusFilter
 {
@@ -38,12 +41,12 @@ public static class IncidentEndpoints
     }
 
     private static Task<IResult> ListAsync(
-        DeployGuardDbContext db, TimeProvider time, CancellationToken ct,
+        DeployGuardDbContext db, TimeProvider time, IOptions<DeploymentOptions> deployments, CancellationToken ct,
         IncidentStatusFilter status = IncidentStatusFilter.All, int? limit = null) =>
-        QueryAsync(db, time, null, status, limit, ct);
+        QueryAsync(db, time, deployments.Value, null, status, limit, ct);
 
     private static async Task<IResult> ListForApplicationAsync(
-        Guid id, DeployGuardDbContext db, TimeProvider time, CancellationToken ct,
+        Guid id, DeployGuardDbContext db, TimeProvider time, IOptions<DeploymentOptions> deployments, CancellationToken ct,
         IncidentStatusFilter status = IncidentStatusFilter.All, int? limit = null)
     {
         if (!await db.Applications.AnyAsync(a => a.Id == id, ct))
@@ -51,13 +54,14 @@ public static class IncidentEndpoints
             return Results.NotFound();
         }
 
-        return await QueryAsync(db, time, id, status, limit, ct);
+        return await QueryAsync(db, time, deployments.Value, id, status, limit, ct);
     }
 
     private static async Task<IResult> QueryAsync(
-        DeployGuardDbContext db, TimeProvider time, Guid? applicationId,
+        DeployGuardDbContext db, TimeProvider time, DeploymentOptions deployments, Guid? applicationId,
         IncidentStatusFilter status, int? limit, CancellationToken ct)
     {
+        var window = TimeSpan.FromMinutes(deployments.CorrelationWindowMinutes);
         var take = Math.Clamp(limit ?? DefaultLimit, 1, MaxLimit);
         var query = db.Incidents.AsNoTracking();
 
@@ -83,6 +87,12 @@ public static class IncidentEndpoints
                 ApplicationName = a.Name,
                 Sent = i.Notifications.Count(n => n.SentAt != null),
                 Failed = i.Notifications.Count(n => n.FailedAt != null),
+                // Subconsulta correlacionada: o deploy mais recente na janela antes do incidente.
+                // Vira um "LATERAL JOIN" no PostgreSQL, ainda numa única ida ao banco.
+                Suspect = db.Deployments
+                    .Where(d => d.ApplicationId == i.ApplicationId && d.DeployedAt <= i.StartedAt && d.DeployedAt >= i.StartedAt - window)
+                    .OrderByDescending(d => d.DeployedAt)
+                    .FirstOrDefault(),
             })
             .ToListAsync(ct);
 
@@ -99,6 +109,7 @@ public static class IncidentEndpoints
             r.Incident.HttpStatusCode,
             r.Incident.Summary,
             r.Sent,
-            r.Failed)));
+            r.Failed,
+            SuspectedDeployment.From(r.Suspect, r.Incident.StartedAt))));
     }
 }

@@ -33,6 +33,7 @@ public sealed class WebhookAlertSender(IHttpClientFactory httpClientFactory) : I
                 cause = message.Cause.ToString(),
                 summary = message.Summary,
                 dashboardUrl = message.DashboardUrl,
+                suspectedDeployment = message.SuspectedDeployment,
                 text = message.Text(),
             },
         };
