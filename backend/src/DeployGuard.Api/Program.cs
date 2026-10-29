@@ -36,6 +36,9 @@ builder.Services.AddOptions<LiveOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 builder.Services.AddSingleton<LiveEventHub>();
+builder.Services.AddSingleton<LiveEventBus>();
+builder.Services.AddSingleton<LiveEventListener>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<LiveEventListener>());
 builder.Services.AddOptions<DeploymentOptions>()
     .Bind(builder.Configuration.GetSection(DeploymentOptions.SectionName))
     .ValidateDataAnnotations()
@@ -84,7 +87,7 @@ if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
     // Conveniente para dev e Docker Compose. Em produção o ideal é aplicar
     // migrations num passo separado do pipeline de deploy.
     await using var scope = app.Services.CreateAsyncScope();
-    await scope.ServiceProvider.GetRequiredService<DeployGuardDbContext>().Database.MigrateAsync();
+    await DatabaseStartup.MigrateAsync(scope.ServiceProvider.GetRequiredService<DeployGuardDbContext>());
 }
 
 await AuthSetup.EnsureBootstrapAdminAsync(app.Services, app.Logger);

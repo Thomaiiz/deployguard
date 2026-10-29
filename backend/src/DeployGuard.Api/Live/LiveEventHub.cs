@@ -5,11 +5,12 @@ using Microsoft.Extensions.Options;
 namespace DeployGuard.Api.Live;
 
 /// <summary>
-/// "Central de avisos" em memória (padrão publish/subscribe). Quem produz eventos (agendador,
-/// endpoint de deploys) chama <see cref="Publish"/>; cada conexão SSE tem sua própria fila.
+/// "Central de avisos" desta instância (padrão publish/subscribe): cada conexão SSE tem sua
+/// própria fila, e <see cref="Publish"/> entrega o aviso a todas elas.
 ///
-/// Limitação consciente: vale só dentro desta instância. Com várias instâncias da API, seria
-/// preciso um barramento compartilhado (LISTEN/NOTIFY do PostgreSQL ou Redis pub/sub).
+/// Quem chama <see cref="Publish"/> é o <see cref="LiveEventListener"/>, ao receber um NOTIFY
+/// do PostgreSQL. Os produtores (agendador, deploys) publicam no banco pelo
+/// <see cref="LiveEventBus"/>, para o aviso chegar a todas as instâncias da API.
 /// </summary>
 public sealed class LiveEventHub(IOptionsMonitor<LiveOptions> options)
 {

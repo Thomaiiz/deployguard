@@ -506,6 +506,70 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
   avisos da B. A solução seria um barramento compartilhado, como o `LISTEN/NOTIFY` do PostgreSQL ou
   Redis pub/sub.
 
+## Etapa 12 (sexta fase): várias instâncias da API
+
+### O que mudou
+
+- O `docker-compose.yml` sobe 2 réplicas da API (`API_REPLICAS`). O nginx reparte as requisições.
+- `HealthCheckScheduler` e `AlertDispatcher` reservam lotes com `UPDATE ... FOR UPDATE SKIP LOCKED
+  ... RETURNING *` em vez de um `SELECT` simples.
+- `LiveEventBus` (publica com `pg_notify`) e `LiveEventListener` (faz `LISTEN` e entrega ao
+  `LiveEventHub` local) levam os avisos ao vivo a todas as instâncias.
+- `DatabaseStartup.MigrateAsync`: migrations protegidas por `pg_advisory_lock`.
+- A criação do admin inicial tolera a corrida entre duas instâncias.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `docker compose ps` | Lista os containers. Com réplicas, aparecem `api-1` e `api-2`. |
+| `docker compose logs -f api` | Segue (`-f`) o log de todas as réplicas. Cada linha começa com o nome da réplica, então dá para ver quem verificou o quê. |
+| `API_REPLICAS=1` no `.env` | Volta a subir uma réplica só. No compose, `${API_REPLICAS:-2}` quer dizer "use a variável ou 2 se ela não existir". |
+| `SELECT pg_notify('canal', 'texto')` | (SQL) Manda uma notificação para quem estiver escutando o canal. |
+| `LISTEN canal` | (SQL) Passa a receber as notificações do canal nesta conexão. |
+
+### Conceitos
+
+- **Escala horizontal x vertical.** Vertical = máquina maior. Horizontal = mais cópias do mesmo
+  programa. A horizontal também dá **alta disponibilidade**: se uma réplica cai, a outra continua.
+- **Por que a API escala fácil e o agendador não.** As requisições HTTP não guardam estado na memória
+  (o login é um JWT no cookie, conferido em qualquer réplica). Já o agendador "decide" o que fazer:
+  com duas cópias, as duas decidiriam verificar a mesma aplicação, e o Slack receberia o alerta em
+  dobro.
+- **Condição de corrida (*race condition*).** Duas réplicas leem "app X vencida" ao mesmo tempo e as
+  duas a verificam. O problema está no intervalo entre **ler** e **marcar**. A solução é ler e
+  marcar num único comando atômico.
+- **`FOR UPDATE SKIP LOCKED`.** `FOR UPDATE` trava as linhas lidas até o fim da transação. `SKIP
+  LOCKED` faz a outra réplica **pular** as linhas travadas em vez de esperar. Resultado: cada uma
+  pega um pedaço diferente, sem fila e sem duplicar. É o jeito clássico de usar uma tabela do
+  PostgreSQL como fila de trabalho.
+- **Lease (prazo de reserva).** Não dá para manter a trava aberta durante as chamadas HTTP (segundos
+  de transação aberta seguram conexões e travas). Então a reserva só empurra `NextCheckAt` para o
+  futuro e a transação termina na hora. Se a réplica morrer antes de gravar, o prazo vence e outra
+  pega. É a mesma ideia do *visibility timeout* do Amazon SQS.
+- **Pelo menos uma vez, de novo.** Se a réplica enviar o alerta e cair antes de gravar `SentAt`, o
+  prazo vence e outra réplica reenvia. Duplicar raramente é aceitável; perder, não.
+- **`LISTEN/NOTIFY`.** Um pub/sub embutido no PostgreSQL. Cada réplica abre uma conexão própria que
+  fica "escutando". O `NOTIFY` é **transacional**: só sai no `COMMIT`. Por isso os avisos vão na
+  mesma transação dos dados, e nunca anunciam algo que foi desfeito. Limite: 8000 bytes por
+  mensagem e nenhuma garantia de entrega se a réplica estiver desconectada. Por isso o aviso é só
+  um "algo mudou" e as telas têm a atualização de segurança.
+- **Advisory lock (trava consultiva).** Uma trava com um número escolhido por nós, que não está
+  ligada a nenhuma tabela. Usamos para "só uma réplica aplica migrations por vez". A outra espera,
+  depois vê que não falta nada e segue.
+- **Dois bugs que só apareceram rodando de verdade.** Os testes passavam, mas ao subir 2 réplicas
+  no Compose: (1) as duas aplicaram migrations ao mesmo tempo e uma quebrou com `column already
+  exists`; (2) as duas tentaram criar o admin inicial. A correção do primeiro é a advisory lock; a
+  do segundo é tratar a violação de e-mail único como "outra réplica já criou". Lição: concorrência
+  precisa ser testada com concorrência de verdade.
+- **Testando duas instâncias.** O teste sobe dois hosts da API (`WithWebHostBuilder`) no mesmo
+  banco e roda os dois agendadores ao mesmo tempo com um health check falso lento (100 ms), para
+  as rodadas se sobreporem. Para provar que o teste vale, troquei a reserva por um `SELECT` simples:
+  o teste falhou, com aplicações verificadas duas vezes.
+- **O que ficou por instância.** O rate limit e o limite de conexões ao vivo vivem na memória de
+  cada réplica, então com 2 réplicas o teto dobra. Um limite global precisaria de um contador
+  compartilhado, como o Redis.
+
 ---
 
 ## Perguntas de entrevista
@@ -617,4 +681,19 @@ e a tela busca os dados na API, então perder um aviso não deixa a tela errada.
 Cada conexão tem uma fila limitada que descarta os avisos mais antigos, então um cliente lento não
 consome memória sem fim. Há um limite de conexões: acima dele a API responde 503 e o dashboard
 continua funcionando com atualização a cada minuto.
+
+**Como você escalou o DeployGuard para várias instâncias?**
+A API já era stateless (JWT no cookie), então o nginx reparte as requisições. O agendador e os
+alertas reservam lotes com `UPDATE ... FOR UPDATE SKIP LOCKED`: cada réplica pega linhas
+diferentes, e a reserva tem um prazo, então se uma réplica cair outra assume. Os avisos ao vivo
+passam pelo `LISTEN/NOTIFY` do PostgreSQL, dentro da transação, para chegar a todas as réplicas.
+
+**Por que não usar RabbitMQ ou Redis?**
+Para esse volume, o PostgreSQL resolve fila (`SKIP LOCKED`) e pub/sub (`LISTEN/NOTIFY`), e é um
+serviço a menos para operar e proteger. Se o volume crescesse muito, ou se eu precisasse de rate
+limit global, aí o Redis passaria a valer a pena.
+
+**Qual bug de concorrência você encontrou?**
+Ao subir duas réplicas juntas, as duas aplicaram as migrations ao mesmo tempo e uma quebrou.
+Resolvi com uma advisory lock do PostgreSQL, e escrevi um teste que sobe as duas em paralelo.
 

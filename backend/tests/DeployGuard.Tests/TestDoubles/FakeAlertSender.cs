@@ -10,14 +10,20 @@ public sealed class FakeAlertSender : IAlertSender
 
     public bool Fail { get; set; }
 
-    public Task SendAsync(WebhookChannelOptions channel, AlertMessage message, CancellationToken ct)
+    public TimeSpan Delay { get; set; }
+
+    public async Task SendAsync(WebhookChannelOptions channel, AlertMessage message, CancellationToken ct)
     {
+        if (Delay > TimeSpan.Zero)
+        {
+            await Task.Delay(Delay, ct);
+        }
+
         if (Fail)
         {
             throw new HttpRequestException("Canal respondeu HTTP 500.", null, System.Net.HttpStatusCode.InternalServerError);
         }
 
         Sent.Enqueue((channel.Name, message));
-        return Task.CompletedTask;
     }
 }

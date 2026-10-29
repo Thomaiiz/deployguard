@@ -17,6 +17,9 @@ Funcionalidades atuais:
 - **Etapa 5:** **painel em tempo real**. O dashboard recebe avisos do servidor por
   **Server-Sent Events** e se atualiza em menos de um segundo quando uma verificação termina, um
   incidente abre ou fecha, ou um deploy é registrado.
+- **Etapa 6:** **várias instâncias da API**. O Compose sobe duas cópias atrás do nginx. Elas dividem
+  as verificações e os alertas pelo banco (`FOR UPDATE SKIP LOCKED`), sem verificar nada em dobro,
+  e os avisos ao vivo chegam a todas pelo `LISTEN/NOTIFY` do PostgreSQL.
 
 | Camada | Tecnologia |
 |---|---|
@@ -73,6 +76,15 @@ depender da internet, cadastre a aplicação de demonstração que sobe junto:
 | Demo quebrado | `http://demo-app:8080/broken` | Fora do ar (HTTP 503) |
 | Teste de SSRF | `http://169.254.169.254:8080/` | Rejeitado no cadastro |
 
+O Compose sobe **duas réplicas** da API. Para ver as duas dividindo o trabalho:
+
+```bash
+docker compose ps                                      # api-1 e api-2 rodando
+docker compose logs -f api | grep "health checks"      # rodadas feitas por api-1 e por api-2
+```
+
+Para subir uma só, use `API_REPLICAS=1` no `.env`.
+
 Para receber alertas, coloque no `.env` a URL de um
 [Incoming Webhook do Slack](https://api.slack.com/messaging/webhooks) ou de um webhook do Discord
 (`ALERT_WEBHOOK_URL` e `ALERT_WEBHOOK_FORMAT`). Sem isso, os incidentes aparecem no dashboard, mas
@@ -116,12 +128,12 @@ flowchart LR
 
     subgraph compose[Docker Compose]
         nginx[web: nginx<br/>Angular estático + proxy /api]
-        subgraph api[api: ASP.NET Core]
+        subgraph api[api: ASP.NET Core, 2 réplicas]
             endpoints[Endpoints REST<br/>+ rate limiting]
             scheduler[HealthCheckScheduler<br/>BackgroundService]
             checker[HealthChecker<br/>+ SafeSocketConnector]
             dispatcher[AlertDispatcher<br/>BackgroundService]
-            hub[LiveEventHub<br/>pub/sub em memória]
+            hub[LiveEventHub<br/>+ LISTEN/NOTIFY]
         end
         db[(PostgreSQL)]
         demo[demo-app]
@@ -227,7 +239,8 @@ sequenceDiagram
   corrige.
 - **`LiveEventHub`**: cada conexão tem sua própria fila (`Channel`) limitada a 100 eventos. Se o
   cliente for lento, os mais antigos são descartados (`DropOldest`), e quem publica nunca espera.
-  O agendador só publica **depois** de gravar no banco, para o aviso nunca chegar antes do dado.
+  Os avisos passam pelo PostgreSQL (`NOTIFY`) dentro da mesma transação dos dados, então nunca
+  chegam antes do dado (veja "Várias instâncias", abaixo).
 - **Proteções**: exige login como o resto da API (uma chave de CI não serve), máximo de
   `MaxConnections` conexões (acima disso, `503` e a tela segue com a atualização de 1 minuto),
   `ping` a cada 15 s para proxies não derrubarem a conexão parada, e duração máxima de 5 min: cada
@@ -235,6 +248,49 @@ sequenceDiagram
 - **No frontend**, uma conexão é compartilhada entre as telas (`share`), e uma rajada de avisos (uma
   rodada de verificações) vira uma busca só (`auditTime`). O nginx tem um `location` próprio para
   `/api/events` com `proxy_buffering off`, senão os eventos ficariam presos no buffer.
+
+### Várias instâncias
+
+O `docker-compose.yml` sobe **duas réplicas** da API (`API_REPLICAS`, padrão 2). O nginx distribui
+as requisições entre elas, e qualquer uma atende qualquer usuário, porque o login (JWT) não guarda
+nada na memória do servidor. O que precisou de cuidado foi o trabalho em segundo plano:
+
+```mermaid
+sequenceDiagram
+    participant A as API réplica 1
+    participant DB as PostgreSQL
+    participant B as API réplica 2
+    A->>DB: UPDATE ... WHERE Id IN (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING *
+    B->>DB: mesmo UPDATE, no mesmo instante
+    DB-->>A: apps 1 a 8 (NextCheckAt = agora + prazo)
+    DB-->>B: apps 9 a 16 (pulou as travadas pela réplica 1)
+    A->>A: verifica 1 a 8
+    A->>DB: grava resultados + NOTIFY deployguard_live (mesma transação)
+    DB-->>B: notificação (B faz LISTEN)
+    B-->>B: repassa para os navegadores conectados nela
+```
+
+- **Agendador e alertas: reserva com `FOR UPDATE SKIP LOCKED`.** Cada instância reserva um lote num
+  único `UPDATE` atômico. Linhas que outra instância está reservando naquele instante são
+  **puladas**, não esperadas. A reserva empurra `NextCheckAt` (ou `NextAttemptAt`, nos alertas)
+  para o fim de um **prazo** (*lease*). Para as outras instâncias, a linha deixa de estar vencida.
+  Ao terminar, a instância grava o horário certo da próxima verificação.
+- **Se uma instância cair no meio**, nada fica preso: o prazo vence e outra instância pega a
+  aplicação. Nenhuma trava fica aberta durante as chamadas HTTP, que podem levar segundos. O prazo
+  é calculado da configuração (o pior caso do lote em dobro, mais uma folga), então não há um
+  número a mais para errar.
+- **Lotes pequenos** (`MaxConcurrentChecks` x 4) para várias instâncias dividirem um volume grande.
+  A instância processa lotes até não sobrar nada vencido.
+- **Avisos ao vivo com `LISTEN/NOTIFY`.** Quem produz um aviso faz `pg_notify` no banco. Cada
+  instância mantém uma conexão fazendo `LISTEN` e repassa os avisos aos navegadores conectados
+  nela. O `NOTIFY` é **transacional**: só é entregue no `COMMIT`, e um `ROLLBACK` o descarta. Assim
+  o aviso nunca chega antes do dado nem anuncia algo que não foi gravado. Se a conexão cair, ela
+  reconecta com espera crescente, e enquanto isso as telas seguem com a atualização de 1 minuto.
+- **Subida simultânea.** As duas réplicas sobem juntas. No teste com Compose, as duas tentaram
+  aplicar as migrations ao mesmo tempo e uma quebrou com `column already exists`. A correção foi
+  uma **trava consultiva** do PostgreSQL (`pg_advisory_lock`): a primeira migra, e a segunda espera
+  e encontra tudo aplicado. A criação do admin inicial também pode correr em paralelo; a
+  restrição de e-mail único garante que só uma consegue, e a outra só registra no log.
 
 ### Modelo de dados
 
@@ -300,10 +356,15 @@ permitem extrair um serviço depois, se fizer sentido.
 **Minimal APIs em vez de controllers.** Menos cerimônia, endpoints agrupados com `MapGroup`, e as
 dependências chegam por parâmetro (injeção de dependência por método).
 
-**Agendador dentro da API (`BackgroundService`).** Um único processo para subir e operar. O custo
-é que, com várias instâncias da API, cada uma verificaria as mesmas aplicações. Quando houver escala
-horizontal, o caminho é separar um worker ou usar `SELECT ... FOR UPDATE SKIP LOCKED` para
-distribuir o trabalho.
+**Agendador dentro da API (`BackgroundService`).** Um único processo para subir e operar. Com
+várias instâncias, cada uma reserva lotes diferentes com `FOR UPDATE SKIP LOCKED`, e o próprio
+banco coordena quem faz o quê. Um worker separado seria o próximo passo se as verificações
+começassem a disputar CPU com as requisições do dashboard.
+
+**PostgreSQL como fila e como carteiro.** `SKIP LOCKED` faz uma tabela funcionar como fila de
+trabalho, e `LISTEN/NOTIFY` entrega avisos entre processos. Para o volume do DeployGuard, isso
+evita subir RabbitMQ ou Redis só para coordenar instâncias: um serviço a menos para operar,
+proteger e monitorar.
 
 **`NextCheckAt` persistido.** A pergunta "quem está vencido?" vira uma consulta indexada simples, e
 o agendamento sobrevive a reinícios.
@@ -335,9 +396,9 @@ HTTP puro: passa pelo nginx e pelo rate limit, usa o cookie e a autenticação q
 reconecta sozinho. WebSocket exigiria outro protocolo, autenticação própria no *handshake* e
 reconexão manual.
 
-**Pub/sub em memória.** Simples e sem infraestrutura nova, mas vale só dentro de uma instância.
-Com várias instâncias, cada uma publicaria só os próprios eventos. O caminho seria um barramento
-compartilhado: `LISTEN/NOTIFY` do PostgreSQL (já temos) ou Redis pub/sub.
+**Pub/sub em duas camadas.** O `LISTEN/NOTIFY` leva o aviso a cada instância, e o `LiveEventHub`
+de cada uma distribui o aviso para os navegadores conectados nela. Cada navegador continua com sua
+fila limitada e independente.
 
 **Mesma origem via proxy reverso.** O navegador fala só com o nginx, que encaminha `/api`. Não
 existe CORS para configurar, e a API não fica exposta.
@@ -588,7 +649,7 @@ cd frontend
 npm run test:ci
 ```
 
-**Backend (155 testes)**
+**Backend (161 testes)**
 
 - Unidade: `IpAddressGuard` (faixas privadas, IPv6, IPv4 mapeado), `UrlSafetyPolicy` (esquemas,
   credenciais, portas, curingas, IP literal), `SafeSocketConnector` (DNS rebinding, inclusive com um
@@ -603,6 +664,11 @@ npm run test:ci
 - Tempo real: o `LiveEventHub` (entrega, limite de conexões, descarte dos eventos antigos), o fluxo
   SSE com relógio falso (`ready`, evento, `ping`, fim por tempo máximo) e, na integração, um
   cliente lendo `/api/events` de verdade enquanto o agendador roda, além de `401` e `503`.
+- Várias instâncias: dois hosts da API no mesmo banco. As duas dividem 30 aplicações sem verificar
+  nenhuma em dobro (o teste falha se a reserva com `SKIP LOCKED` for trocada por um `SELECT`
+  simples), uma reserva some até o prazo vencer, dois dispatchers entregam cada alerta uma vez só,
+  um navegador conectado na instância B recebe o aviso de uma verificação feita pela A, um `NOTIFY`
+  de transação desfeita nunca é entregue, e duas subidas simultâneas aplicam as migrations uma vez.
 
 **Frontend (52 testes)**: serviço HTTP com `HttpTestingController`, dashboard (cards, resumo, estado
 vazio, erro de rede, escape de HTML, banner de incidentes, avisos ao vivo), canal ao vivo com um
@@ -621,7 +687,7 @@ PostgreSQL como service container, auditoria de pacotes, formatação, testes e 
 backend/
   src/DeployGuard.Api/
     Domain/           entidades e enums (MonitoredApplication, HealthCheckResult, CheckStatus)
-    Data/             DbContext e migrations do EF Core
+    Data/             DbContext, migrations e migração segura com várias instâncias
     Applications/     endpoints de cadastro, validação, DTOs
     Monitoring/       política de URL, guarda de IP, conector seguro, checker, agendador
     History/          endpoints de histórico e estatísticas, cursor de paginação
@@ -629,7 +695,7 @@ backend/
     Alerting/         máquina de estados do incidente, outbox dispatcher, envio por webhook
     Auth/             login, JWT, política de senha, usuários, chaves de API
     Deployments/      registro de deploys, validação e correlação com incidentes
-    Live/             canal ao vivo: pub/sub em memória e endpoint Server-Sent Events
+    Live/             canal ao vivo: LISTEN/NOTIFY entre instâncias, pub/sub local e endpoint SSE
     Infrastructure/   rate limiting e cabeçalhos de segurança
     Program.cs        composição da aplicação (DI e pipeline HTTP)
   tests/DeployGuard.Tests/
@@ -655,10 +721,16 @@ docker-compose.yml
 - **Login corporativo (SSO/OIDC)** com Entra ID, Google ou Keycloak, e MFA.
 - **Troca de senha** pelo próprio usuário e bloqueio de conta após muitas falhas (hoje só há o
   rate limit por IP).
-- **Várias instâncias**: distribuir o agendamento (`FOR UPDATE SKIP LOCKED` ou worker separado) e
-  compartilhar os avisos ao vivo (`LISTEN/NOTIFY` ou Redis).
-- **Limite de conexões ao vivo por usuário**: hoje o limite é global, então um usuário logado com
-  muitas abas poderia ocupar as vagas (os outros continuariam com a atualização de 1 minuto).
+- **Limites por instância**: o rate limit e o limite de conexões ao vivo ficam na memória de cada
+  réplica, então com duas réplicas o teto efetivo dobra. Um limite global exigiria um contador
+  compartilhado (Redis, por exemplo).
+- **Limite de conexões ao vivo por usuário**: hoje o limite é por instância, então um usuário logado
+  com muitas abas poderia ocupar as vagas (os outros continuariam com a atualização de 1 minuto).
+- **nginx resolve o endereço das réplicas ao iniciar.** Se uma réplica for recriada com outro IP, é
+  preciso reiniciar o `web`. Em produção, um orquestrador (Kubernetes, ECS) ou um `resolver` no
+  nginx cuida disso.
+- **Limpeza de resultados antigos** roda em todas as réplicas. É inofensivo (o `DELETE` é idempotente),
+  mas trabalho repetido.
 - **Mais canais de alerta** (e-mail, SMS) e regras por aplicação (quem avisar, horário de plantão).
 - **Particionamento** da tabela de resultados por data, se o volume crescer.
 - **Validação do corpo** da resposta (ex.: exigir `"status":"ok"`) com limite de bytes lidos.
