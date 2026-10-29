@@ -1,5 +1,7 @@
 using DeployGuard.Api.Alerting;
+using DeployGuard.Api.Auth;
 using DeployGuard.Api.Data;
+using DeployGuard.Api.Domain;
 using DeployGuard.Api.Monitoring;
 using DeployGuard.Tests.TestDoubles;
 using Microsoft.AspNetCore.Hosting;
@@ -28,7 +30,12 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public FakeAlertSender AlertSender { get; } = new();
 
+    public const string AdminEmail = "admin@example.com";
+    public const string AdminPassword = "frase-secreta-de-teste-2026";
+
     protected virtual int WriteRequestsPerMinute => 1_000;
+
+    protected virtual int LoginRequestsPerMinute => 1_000;
 
     public async Task InitializeAsync()
     {
@@ -57,6 +64,11 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Monitoring:MaxApplications", "5");
         builder.UseSetting("RateLimiting:WriteRequestsPerMinute", WriteRequestsPerMinute.ToString());
         builder.UseSetting("RateLimiting:ReadRequestsPerMinute", "1000");
+        builder.UseSetting("RateLimiting:LoginRequestsPerMinute", LoginRequestsPerMinute.ToString());
+        builder.UseSetting("Auth:JwtSigningKey", "chave-de-teste-com-pelo-menos-32-caracteres");
+        builder.UseSetting("Auth:CookieSecure", "false"); // o TestServer usa http://localhost
+        builder.UseSetting("Auth:BootstrapAdminEmail", AdminEmail);
+        builder.UseSetting("Auth:BootstrapAdminPassword", AdminPassword);
         builder.UseSetting("Alerting:DispatcherEnabled", "false");
         builder.UseSetting("Alerting:FailureThreshold", "2");
         builder.UseSetting("Alerting:MaxDeliveryAttempts", "2");
@@ -77,6 +89,26 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         await using var scope = Services.CreateAsyncScope();
         await action(scope.ServiceProvider.GetRequiredService<DeployGuardDbContext>());
+    }
+
+    /// <summary>
+    /// Cliente já autenticado como o usuário informado. Gera o token direto pelo TokenService
+    /// (sem passar pelo /login), para não gastar a cota do rate limit de login nos testes.
+    /// </summary>
+    public HttpClient CreateClientAs(User user)
+    {
+        var client = CreateClient();
+        var (token, _) = Services.GetRequiredService<TokenService>().Create(user);
+        client.DefaultRequestHeaders.Add("Cookie", $"{AuthOptions.CookieName}={token}");
+        return client;
+    }
+
+    public HttpClient CreateAdminClient()
+    {
+        CreateClient().Dispose(); // garante que a API subiu (migrations + admin inicial)
+        using var scope = Services.CreateScope();
+        var admin = scope.ServiceProvider.GetRequiredService<DeployGuardDbContext>().Users.Single(u => u.Email == AdminEmail);
+        return CreateClientAs(admin);
     }
 
     public HealthCheckScheduler Scheduler => Services.GetRequiredService<HealthCheckScheduler>();
@@ -107,4 +139,8 @@ public sealed class IncidentApiFactory : ApiFactory;
 public sealed class StrictRateLimitApiFactory : ApiFactory
 {
     protected override int WriteRequestsPerMinute => 2;
+
+    protected override int LoginRequestsPerMinute => 3;
 }
+
+public sealed class AuthApiFactory : ApiFactory;

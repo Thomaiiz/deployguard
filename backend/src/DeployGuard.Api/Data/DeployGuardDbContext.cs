@@ -13,8 +13,20 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
 
     public DbSet<AlertNotification> AlertNotifications => Set<AlertNotification>();
 
+    public DbSet<User> Users => Set<User>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<User>(user =>
+        {
+            user.ToTable("users");
+            user.HasKey(u => u.Id);
+            user.Property(u => u.Email).HasMaxLength(254).IsRequired();
+            user.Property(u => u.PasswordHash).HasMaxLength(512).IsRequired();
+            user.Property(u => u.Role).HasConversion<string>().HasMaxLength(16);
+            user.HasIndex(u => u.Email).IsUnique();
+        });
+
         modelBuilder.Entity<MonitoredApplication>(app =>
         {
             app.ToTable("applications");

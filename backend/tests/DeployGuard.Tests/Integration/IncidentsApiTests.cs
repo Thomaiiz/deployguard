@@ -19,7 +19,7 @@ public class IncidentsApiTests(IncidentApiFactory factory) : IClassFixture<Incid
     private static readonly HealthCheckOutcome Up = new(CheckStatus.Up, 200, 40, CheckErrorType.None, null);
     private static readonly HealthCheckOutcome Down = new(CheckStatus.Down, 503, 30, CheckErrorType.UnexpectedStatusCode, "HTTP 503");
 
-    private readonly HttpClient _client = factory.CreateClient();
+    private readonly HttpClient _client = factory.CreateAdminClient();
 
     private async Task<ApplicationResponse> CreateAsync(string name)
     {

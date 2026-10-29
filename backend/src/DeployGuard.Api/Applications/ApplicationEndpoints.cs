@@ -1,3 +1,4 @@
+using DeployGuard.Api.Auth;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Domain;
 using DeployGuard.Api.Infrastructure;
@@ -15,9 +16,15 @@ public static class ApplicationEndpoints
 
         group.MapGet("/", ListAsync);
         group.MapGet("/{id:guid}", GetAsync).WithName("GetApplication");
-        group.MapPost("/", CreateAsync).RequireRateLimiting(RateLimitingSetup.WritePolicy);
-        group.MapPut("/{id:guid}", UpdateAsync).RequireRateLimiting(RateLimitingSetup.WritePolicy);
-        group.MapDelete("/{id:guid}", DeleteAsync).RequireRateLimiting(RateLimitingSetup.WritePolicy);
+        group.MapPost("/", CreateAsync)
+            .RequireAuthorization(AuthSetup.AdminPolicy)
+            .RequireRateLimiting(RateLimitingSetup.WritePolicy);
+        group.MapPut("/{id:guid}", UpdateAsync)
+            .RequireAuthorization(AuthSetup.AdminPolicy)
+            .RequireRateLimiting(RateLimitingSetup.WritePolicy);
+        group.MapDelete("/{id:guid}", DeleteAsync)
+            .RequireAuthorization(AuthSetup.AdminPolicy)
+            .RequireRateLimiting(RateLimitingSetup.WritePolicy);
 
         return api;
     }
