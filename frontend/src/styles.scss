@@ -410,3 +410,39 @@ td {
 .card.form + .card {
   margin-top: 1rem;
 }
+
+.chart__deploy {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+}
+.chart__deploy-key {
+  color: var(--accent);
+}
+.form--inline {
+  max-width: none;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+  margin-bottom: 1rem;
+}
+code {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 0.85em;
+  background: var(--neutral-bg);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.key-reveal {
+  border-color: var(--accent);
+}
+.key-reveal__value {
+  display: block;
+  margin: 0.75rem 0;
+  padding: 0.6rem;
+  user-select: all;
+}
+.card + .card,
+.key-reveal + .card {
+  margin-top: 1rem;
+}

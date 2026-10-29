@@ -2,9 +2,13 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
+  ApiKey,
   ApplicationStats,
+  CreatedApiKey,
   CreateApplicationRequest,
+  CreateDeploymentRequest,
   CreateUserRequest,
+  Deployment,
   HealthCheckPage,
   Incident,
   IncidentStatusFilter,
@@ -91,5 +95,34 @@ export class DeployGuardApi {
 
   deleteUser(id: string): Observable<void> {
     return this.http.delete<void>(`/api/users/${encodeURIComponent(id)}`);
+  }
+
+  listDeployments(applicationId: string, limit = 20): Observable<Deployment[]> {
+    return this.http.get<Deployment[]>(
+      `${this.baseUrl}/${encodeURIComponent(applicationId)}/deployments`,
+      { params: new HttpParams().set('limit', limit) },
+    );
+  }
+
+  createDeployment(
+    applicationId: string,
+    request: CreateDeploymentRequest,
+  ): Observable<Deployment> {
+    return this.http.post<Deployment>(
+      `${this.baseUrl}/${encodeURIComponent(applicationId)}/deployments`,
+      request,
+    );
+  }
+
+  listApiKeys(): Observable<ApiKey[]> {
+    return this.http.get<ApiKey[]>('/api/api-keys');
+  }
+
+  createApiKey(name: string): Observable<CreatedApiKey> {
+    return this.http.post<CreatedApiKey>('/api/api-keys', { name });
+  }
+
+  deleteApiKey(id: string): Observable<void> {
+    return this.http.delete<void>(`/api/api-keys/${encodeURIComponent(id)}`);
   }
 }

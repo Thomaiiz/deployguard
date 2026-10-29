@@ -11,6 +11,9 @@ Funcionalidades atuais:
   **alertar** o time por webhook (Slack, Discord ou JSON genérico), com entrega confiável.
 - **Etapa 3:** **login** com e-mail e senha e dois papéis: **Admin** (cadastra aplicações e
   usuários) e **Viewer** (só acompanha). Toda a API exige login.
+- **Etapa 4:** **registro de deploys**. O pipeline de CI avisa cada versão que vai para produção
+  (com uma chave de API), e o DeployGuard mostra os deploys no gráfico e aponta o **deploy
+  suspeito** quando um incidente começa logo depois de um deploy, inclusive no alerta do Slack.
 
 | Camada | Tecnologia |
 |---|---|
@@ -20,8 +23,8 @@ Funcionalidades atuais:
 | Testes | xUnit, WebApplicationFactory, Testcontainers, Vitest |
 | Infra | Docker Compose, nginx, GitHub Actions, Dependabot |
 
-> Fora do escopo desta etapa (visão futura): AWS CloudWatch, OpenTelemetry, correlação de
-> deploys, investigação assistida por IA e integração com Azure.
+> Fora do escopo por enquanto (visão futura): AWS CloudWatch, OpenTelemetry, investigação
+> assistida por IA e integração com Azure.
 
 ---
 
@@ -167,6 +170,27 @@ stateDiagram-v2
 - **Retentativas com backoff exponencial:** 30 s, 1 min, 2 min, 4 min... até `MaxDeliveryAttempts`.
 - **Entrega "pelo menos uma vez":** se o processo cair entre enviar e gravar, a mensagem é
   reenviada. Um alerta duplicado é aceitável; um perdido, não.
+
+### Deploys e deploy suspeito
+
+```mermaid
+sequenceDiagram
+    participant CI as GitHub Actions
+    participant API as DeployGuard API
+    participant S as Agendador
+    participant Slack
+    CI->>API: POST /deployments (Bearer dg_...) "v1.4.2"
+    Note over S: 3 min depois a aplicação começa a falhar
+    S->>API: abre incidente + grava alerta (outbox)
+    API->>Slack: "Loja FORA DO AR... Último deploy: v1.4.2, 3 min antes."
+```
+
+A primeira pergunta de quem está de plantão é "o que mudou?". Na maioria das vezes a resposta é
+um deploy. O DeployGuard procura o deploy mais recente da aplicação até
+`CorrelationWindowMinutes` (30) antes do início do incidente e o mostra na API, no dashboard e no
+alerta. É uma **pista** para a investigação, não uma prova de causa. A busca usa o índice
+`(ApplicationId, DeployedAt)` e, na listagem de incidentes, vira uma subconsulta na mesma ida ao
+banco.
 
 ### Modelo de dados
 
@@ -357,6 +381,12 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
   de erro é a mesma para e-mail inexistente e senha errada, e o tempo de resposta também (a API
   calcula um hash mesmo quando o e-mail não existe).
 - **Sem open redirect.** Depois do login, o dashboard só volta para caminhos internos.
+- **Chaves de API para máquinas** (o CI registrando deploys). São 32 bytes aleatórios
+  (`dg_...`), mostradas **uma única vez** e guardadas só como hash SHA-256. Valem apenas para
+  registrar deploy: em qualquer outro endpoint a resposta é `401` (menor privilégio). Revogar é
+  imediato, e a lista mostra o último uso de cada chave.
+- **Links de deploy só `https`**, porque viram `<a href>` no dashboard: `javascript:` ou `data:`
+  seriam XSS.
 
 ### 7. Outras defesas
 
@@ -393,7 +423,13 @@ marcadas com **Admin** respondem `403` para Viewers.
 | `GET` | `/applications/{id}/checks` | Histórico paginado. Query: `limit` (1 a 500), `cursor`, `from`, `to`, `status` |
 | `GET` | `/applications/{id}/stats` | Disponibilidade, latência média, p95, máxima e erros por tipo. Query: `hours` (1 a 168) |
 | `GET` | `/incidents` | Incidentes de todas as aplicações. Query: `status` (`All`, `Open`, `Resolved`), `limit` (até 200) |
-| `GET` | `/applications/{id}/incidents` | Incidentes de uma aplicação |
+| `GET` | `/applications/{id}/incidents` | Incidentes de uma aplicação. Cada incidente traz `suspectedDeployment` quando houve deploy até 30 min antes |
+| `GET` | `/deployments` | Últimos deploys de todas as aplicações. Query: `limit` (até 200) |
+| `GET` | `/applications/{id}/deployments` | Deploys de uma aplicação |
+| `POST` | `/applications/{id}/deployments` | **Admin ou chave de API.** Registra (`version`, `commitSha?`, `description?`, `url?` https, `deployedAt?`) |
+| `GET` | `/api-keys` | **Admin.** Lista as chaves (nome, prefixo, último uso; nunca a chave) |
+| `POST` | `/api-keys` | **Admin.** Cria (`name`). A resposta traz a chave completa, só desta vez |
+| `DELETE` | `/api-keys/{id}` | **Admin.** Revoga |
 | `GET` | `/health` | Público (fora de `/api`). Liveness da própria API |
 
 Exemplos:
@@ -411,7 +447,15 @@ curl -b cookies.txt "http://localhost:8080/api/applications/{id}/checks?limit=20
 # → { "items": [...], "nextCursor": "MTM4..." }   passe ?cursor=... para a próxima página
 
 curl -b cookies.txt "http://localhost:8080/api/applications/{id}/stats?hours=24"
+
+# No pipeline de CI, com uma chave de API em vez do cookie:
+curl -X POST http://localhost:8080/api/applications/{id}/deployments \
+  -H "Authorization: Bearer dg_..." -H 'Content-Type: application/json' \
+  -d '{"version":"v1.4.2","commitSha":"a1b2c3d"}'
 ```
+
+Um workflow completo do GitHub Actions que avisa cada deploy está em
+[`docs/exemplos/avisar-deploy.yml`](docs/exemplos/avisar-deploy.yml).
 
 Resposta de validação (`400`):
 
@@ -459,6 +503,7 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Alerting:DispatchIntervalSeconds` | `10` | Frequência do dispatcher de alertas |
 | `Alerting:WebhookTimeoutSeconds` | `10` | Timeout de cada chamada ao webhook |
 | `Alerting:DashboardBaseUrl` | (vazio) | Se definido, a mensagem inclui um link para a aplicação |
+| `Deployments:CorrelationWindowMinutes` | `30` | Um incidente que começa até N minutos depois de um deploy aponta esse deploy como suspeito |
 
 ---
 
@@ -510,7 +555,8 @@ backend/
     History/          endpoints de histórico e estatísticas, cursor de paginação
     Incidents/        endpoints de incidentes
     Alerting/         máquina de estados do incidente, outbox dispatcher, envio por webhook
-    Auth/             login, emissão e validação do JWT, política de senha, usuários
+    Auth/             login, JWT, política de senha, usuários, chaves de API
+    Deployments/      registro de deploys, validação e correlação com incidentes
     Infrastructure/   rate limiting e cabeçalhos de segurança
     Program.cs        composição da aplicação (DI e pipeline HTTP)
   tests/DeployGuard.Tests/
@@ -520,6 +566,7 @@ frontend/
     core/             modelos, cliente da API, Problem Details, sessão (AuthService), guards, interceptor
     login/            tela de login
     users/            gestão de usuários (só Admin)
+    api-keys/         chaves de API para o CI (só Admin)
     dashboard/        lista de aplicações e formulário de cadastro
     application-detail/  estatísticas, gráfico de latência e histórico
     shared/           badge de status, pipe de tempo relativo
