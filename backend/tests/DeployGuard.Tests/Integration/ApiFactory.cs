@@ -196,6 +196,26 @@ public sealed class AccountSecurityApiFactory : ApiFactory;
 
 public sealed class PasswordResetApiFactory : ApiFactory;
 
+/// <summary>Rate limit de login baixo (3/min) com o contador no Redis compartilhado.</summary>
+public class RedisRateLimitApiFactory : ApiFactory
+{
+    protected override int LoginRequestsPerMinute => 3;
+
+    protected virtual string RedisConnection => RedisTestServer.ConnectionString;
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.UseSetting("RateLimiting:Redis", RedisConnection);
+    }
+}
+
+/// <summary>Aponta para um Redis que não existe: a API precisa continuar funcionando.</summary>
+public sealed class UnreachableRedisApiFactory : RedisRateLimitApiFactory
+{
+    protected override string RedisConnection => "127.0.0.1:1,connectTimeout=200";
+}
+
 public sealed class StatusPageApiFactory : ApiFactory
 {
     protected override int MaxApplications => 20;

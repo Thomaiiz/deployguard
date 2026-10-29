@@ -29,6 +29,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__DeployGuard: Host=db;Database=deployguard;Username=deployguard;Password=${POSTGRES_PASSWORD}
@@ -64,12 +66,28 @@ services:
       Email__Username: ${SMTP_USERNAME:-}
       Email__Password: ${SMTP_PASSWORD:-}
       Email__FromAddress: ${SMTP_FROM:-deployguard@localhost}
+      # Rate limit global: as réplicas contam as requisições juntas no Redis. Se o Redis cair,
+      # cada réplica volta a contar sozinha (a API não para).
+      RateLimiting__Redis: redis:6379,password=${REDIS_PASSWORD}
       # Só confia em X-Forwarded-For vindo da rede interna (onde está o nginx).
       ReverseProxy__KnownNetworks__0: 172.28.0.0/24
     networks: [backend, frontend]
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
+
+  # Contadores do rate limit compartilhados entre as réplicas da API. Só guarda contadores que
+  # expiram em 1 minuto, então não precisa de disco (sem RDB nem AOF).
+  redis:
+    image: redis:8.6-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?defina REDIS_PASSWORD no .env (openssl rand -base64 32)}
+    # "$$" escapa o "$" para o compose: quem expande a variável é o shell do container.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --save '' --appendonly no --maxmemory 64mb --maxmemory-policy volatile-ttl"]
+    networks: [backend]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    # Sem "ports": só a API, na rede interna, fala com o Redis.
 
   web:
     build: ./frontend

@@ -85,3 +85,4 @@ jobs:
           AUTH_JWT_KEY: ci-only-signing-key-not-used-anywhere-else
           ADMIN_EMAIL: admin@example.com
           ADMIN_PASSWORD: ci-only-admin-password
+          REDIS_PASSWORD: ci-only-redis-password
