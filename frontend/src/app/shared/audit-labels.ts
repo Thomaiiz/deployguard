@@ -14,6 +14,8 @@ export const AUDIT_LABELS: Record<AuditAction, string> = {
   ApplicationDeleted: 'Aplicação removida',
   ApiKeyCreated: 'Chave de API criada',
   ApiKeyRevoked: 'Chave de API revogada',
+  PasswordResetRequested: 'Recuperação de senha pedida',
+  PasswordResetCompleted: 'Senha redefinida por e-mail',
 };
 
 /** Ações que merecem destaque (possível ataque ou mudança de acesso). */

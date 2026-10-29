@@ -1,20 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import {
-  AbstractControl,
-  NonNullableFormBuilder,
-  ReactiveFormsModule,
-  ValidationErrors,
-  Validators,
-} from '@angular/forms';
+import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
 import { errorMessage, fieldErrors } from '../core/problem-details';
-
-/** As duas senhas novas precisam ser iguais (só no navegador; a API não recebe a confirmação). */
-function sameNewPassword(group: AbstractControl): ValidationErrors | null {
-  const { newPassword, confirmPassword } = group.value as Record<string, string>;
-  return confirmPassword && newPassword !== confirmPassword ? { mismatch: true } : null;
-}
+import { sameNewPassword } from '../shared/password-match';
 
 @Component({
   selector: 'dg-account',

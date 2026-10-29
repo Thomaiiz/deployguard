@@ -4,6 +4,7 @@ using DeployGuard.Api.Applications;
 using DeployGuard.Api.Auth;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Deployments;
+using DeployGuard.Api.Email;
 using DeployGuard.Api.History;
 using DeployGuard.Api.Incidents;
 using DeployGuard.Api.Infrastructure;
@@ -32,6 +33,13 @@ builder.Services.AddAlerting(builder.Configuration);
 builder.Services.AddSingleton<ApplicationValidator>();
 builder.Services.AddApiRateLimiting(builder.Configuration);
 builder.Services.AddDeployGuardAuth(builder.Configuration);
+builder.Services.AddEmail(builder.Configuration);
+builder.Services.AddOptions<PasswordResetOptions>()
+    .Bind(builder.Configuration.GetSection(PasswordResetOptions.SectionName))
+    .ValidateDataAnnotations()
+    .Validate(o => PasswordResetOptions.IsValidBaseUrl(o.DashboardBaseUrl),
+        "PasswordReset:DashboardBaseUrl deve ser uma URL http(s) absoluta, sem query nem fragmento.")
+    .ValidateOnStart();
 builder.Services.AddOptions<LiveOptions>()
     .Bind(builder.Configuration.GetSection(LiveOptions.SectionName))
     .ValidateDataAnnotations()
@@ -108,6 +116,7 @@ app.MapHealthChecks("/health").AllowAnonymous();
 
 var api = app.MapGroup("/api").RequireRateLimiting(RateLimitingSetup.ReadPolicy);
 api.MapAuthEndpoints();
+api.MapPasswordResetEndpoints();
 api.MapUserEndpoints();
 api.MapApiKeyEndpoints();
 api.MapAuditEndpoints();

@@ -114,6 +114,16 @@ export class DeployGuardApi {
     return this.http.post<void>('/api/auth/password', request);
   }
 
+  /** Público. A resposta é sempre a mesma, exista o e-mail ou não. */
+  forgotPassword(email: string): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>('/api/auth/forgot-password', { email });
+  }
+
+  /** Público. O token veio no link do e-mail. */
+  resetPassword(token: string, newPassword: string): Observable<void> {
+    return this.http.post<void>('/api/auth/reset-password', { token, newPassword });
+  }
+
   listAudit(
     options: { limit?: number; before?: number; action?: AuditAction } = {},
   ): Observable<AuditPage> {

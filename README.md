@@ -26,6 +26,10 @@ Funcionalidades atuais:
 - **Etapa 8:** **página de status pública** em `/status`, aberta sem login. O Admin escolhe quais
   aplicações aparecem, e o visitante vê só o nome, a situação e uma barra por dia com a
   disponibilidade dos últimos 30 dias. URLs, erros e latências ficam de fora.
+- **Etapa 9:** **esqueci minha senha**. A pessoa recebe por e-mail um link de uso único que expira
+  em 30 minutos. A resposta não revela se o e-mail existe, o banco guarda só o hash do token, e
+  redefinir a senha derruba todas as sessões. No Compose, os e-mails caem no **Mailpit**
+  (`http://localhost:8025`).
 
 | Camada | Tecnologia |
 |---|---|
@@ -297,6 +301,47 @@ sequenceDiagram
   uma **trava consultiva** do PostgreSQL (`pg_advisory_lock`): a primeira migra, e a segunda espera
   e encontra tudo aplicado. A criação do admin inicial também pode correr em paralelo; a
   restrição de e-mail único garante que só uma consegue, e a outra só registra no log.
+
+### Esqueci minha senha
+
+```mermaid
+sequenceDiagram
+    participant N as Navegador
+    participant A as API
+    participant DB as PostgreSQL
+    participant F as Fila em memória
+    participant S as SMTP (Mailpit)
+    N->>A: POST /auth/forgot-password { email }
+    A->>DB: grava SHA-256(token), expira em 30 min
+    A->>F: e-mail com o link (token em texto puro, só na memória)
+    A-->>N: 202 "Se o e-mail estiver cadastrado..." (sempre igual)
+    F->>S: envia em segundo plano
+    N->>A: POST /auth/reset-password { token, newPassword }
+    A->>DB: UPDATE ... SET UsedAt WHERE hash = ... AND UsedAt IS NULL (atômico)
+    A->>DB: nova senha + SecurityStamp novo (todas as sessões caem)
+    A-->>N: 204
+```
+
+- **Resposta sempre igual.** E-mail cadastrado ou não, a API devolve `202` com a mesma mensagem.
+  O envio acontece depois, numa fila em memória, para que o tempo de resposta também não revele
+  quais contas existem.
+- **Token forte e guardado como hash.** 32 bytes de um gerador criptográfico. O banco tem só o
+  SHA-256, como nas chaves de API. O token em texto puro existe só no e-mail (e na fila, em memória).
+- **Uso único e curto.** Vale 30 minutos e uma vez só. "Gastar" o link é um `UPDATE` atômico, então
+  duas requisições simultâneas com o mesmo token não funcionam as duas (há teste para isso). Um
+  pedido novo cancela o link anterior.
+- **Token no fragmento da URL** (`/reset-password#token=...`). O navegador não envia o que vem depois
+  do `#`, então ele não aparece no log do nginx. A tela tira o token da barra de endereços assim que
+  o lê.
+- **Link montado com endereço fixo** (`PasswordReset:DashboardBaseUrl`), nunca com o cabeçalho
+  `Host` da requisição. Senão um atacante pediria a redefinição da sua conta com
+  `Host: site-dele.com`, e o link do e-mail apontaria para ele (*host header injection*).
+- **Limites:** 3 pedidos por hora por usuário (ninguém usa o DeployGuard para lotar a caixa de
+  alguém) e o mesmo rate limit por IP do login.
+- **Depois da troca:** `SecurityStamp` novo (todas as sessões caem), bloqueio por senhas erradas
+  zerado, e as duas pontas ficam na auditoria.
+- **E-mail só texto**, sem HTML montado com dados. Em produção, use um SMTP com TLS
+  (`Email:Security=StartTls`) e usuário/senha vindos de segredos.
 
 ### Página de status pública
 
@@ -576,6 +621,8 @@ marcadas com **Admin** respondem `403` para Viewers.
 | `DELETE` | `/users/{id}` | **Admin.** Remove (não é possível remover a si mesmo) |
 | `POST` | `/users/{id}/unlock` | **Admin.** Desbloqueia uma conta bloqueada por senhas erradas |
 | `POST` | `/auth/password` | Troca a própria senha (`currentPassword`, `newPassword`). Encerra as outras sessões |
+| `POST` | `/auth/forgot-password` | Público. `{ email }`. Sempre `202` com a mesma mensagem; se o e-mail existir, manda o link |
+| `POST` | `/auth/reset-password` | Público. `{ token, newPassword }`. `204`, ou `400` para link inválido, usado ou expirado |
 | `GET` | `/audit` | **Admin.** Registro de auditoria, mais recente primeiro. Query: `limit` (até 200), `before` (cursor), `action` |
 | `GET` | `/applications` | Lista aplicações com estado atual e disponibilidade em 24h |
 | `GET` | `/applications/{id}` | Detalhe de uma aplicação |
@@ -662,6 +709,13 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Monitoring:ResultRetentionDays` | `30` | Retenção do histórico |
 | `Monitoring:SchedulerTickSeconds` | `5` | Frequência do agendador |
 | `RateLimiting:ReadRequestsPerMinute` / `WriteRequestsPerMinute` / `LoginRequestsPerMinute` / `PublicRequestsPerMinute` | `120` / `20` / `5` / `30` | Limites por IP |
+| `PasswordReset:DashboardBaseUrl` | (vazio) | Endereço do dashboard usado no link do e-mail. Vazio = recuperação desligada |
+| `PasswordReset:TokenLifetimeMinutes` | `30` | Validade do link |
+| `PasswordReset:MaxRequestsPerHour` | `3` | Pedidos por usuário por hora |
+| `Email:SmtpHost` / `SmtpPort` | (vazio) / `587` | Servidor SMTP. Vazio = e-mails descartados (com aviso no log) |
+| `Email:Security` | `StartTls` | `StartTls`, `SslOnConnect` ou `None` (só para servidor local, como o Mailpit) |
+| `Email:Username` / `Password` | (vazio, segredo) | Credenciais do SMTP |
+| `Email:FromAddress` / `FromName` | `deployguard@localhost` / `DeployGuard` | Remetente |
 | `StatusPage:Title` | `Status dos serviços` | Título da página pública |
 | `StatusPage:HistoryDays` | `90` | Dias de histórico (limitado pela retenção) |
 | `StatusPage:CacheSeconds` | `30` | Cache da resposta pública (0 desliga) |
@@ -753,6 +807,7 @@ backend/
     Deployments/      registro de deploys, validação e correlação com incidentes
     Live/             canal ao vivo: LISTEN/NOTIFY entre instâncias, pub/sub local e endpoint SSE
     StatusPage/       página de status pública: rota anônima, DTO mínimo e cache
+    Email/            envio por SMTP (MailKit) com fila em memória e tentativas
     Infrastructure/   rate limiting e cabeçalhos de segurança
     Program.cs        composição da aplicação (DI e pipeline HTTP)
   tests/DeployGuard.Tests/
@@ -761,6 +816,7 @@ frontend/
   src/app/
     core/             modelos, cliente da API, canal ao vivo, Problem Details, sessão, guards, interceptor
     login/            tela de login
+    password-reset/   "esqueci minha senha" e "criar nova senha"
     users/            gestão de usuários e desbloqueio de contas (só Admin)
     account/          "Minha conta": troca de senha
     audit/            registro de auditoria (só Admin)
@@ -779,8 +835,9 @@ docker-compose.yml
 ## Limitações conhecidas e próximos passos
 
 - **Login corporativo (SSO/OIDC)** com Entra ID, Google ou Keycloak, e MFA.
-- **Recuperação de senha por e-mail** ("esqueci minha senha"). Hoje um Admin remove e recria o
-  usuário.
+- **Fila de e-mails durável**: hoje ela fica na memória. Se a instância cair antes do envio, o
+  e-mail se perde e a pessoa pede de novo. Uma fila no banco guardaria o token em texto puro, que é
+  justamente o que evitamos.
 - **Retenção da auditoria**: os registros crescem sem limite. Em produção, guardar por um prazo
   definido (ex.: 1 ano) e exportar para um sistema de logs (SIEM).
 - **Limites por instância**: o rate limit e o limite de conexões ao vivo ficam na memória de cada

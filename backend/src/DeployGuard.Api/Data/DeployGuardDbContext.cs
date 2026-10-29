@@ -21,6 +21,8 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
 
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
+    public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(user =>
@@ -44,6 +46,18 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
             audit.Property(a => a.Details).HasMaxLength(500);
             audit.Property(a => a.IpAddress).HasMaxLength(45); // tamanho máximo de um IPv6 em texto
             audit.HasIndex(a => a.At);
+        });
+
+        modelBuilder.Entity<PasswordResetToken>(reset =>
+        {
+            reset.ToTable("password_reset_tokens");
+            reset.HasKey(r => r.Id);
+            reset.Property(r => r.TokenHash).HasMaxLength(64).IsRequired();
+            reset.HasIndex(r => r.TokenHash).IsUnique(); // a redefinição busca pelo token já "hasheado"
+            reset.HasIndex(r => new { r.UserId, r.CreatedAt }); // limite de pedidos por hora
+
+            // Usuário removido leva junto os pedidos pendentes.
+            reset.HasOne<User>().WithMany().HasForeignKey(r => r.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Deployment>(deployment =>

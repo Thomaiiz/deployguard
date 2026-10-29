@@ -2,6 +2,7 @@ using DeployGuard.Api.Alerting;
 using DeployGuard.Api.Auth;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Domain;
+using DeployGuard.Api.Email;
 using DeployGuard.Api.Monitoring;
 using DeployGuard.Tests.TestDoubles;
 using Microsoft.AspNetCore.Hosting;
@@ -29,6 +30,10 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     public FakeHealthChecker HealthChecker { get; } = new();
 
     public FakeAlertSender AlertSender { get; } = new();
+
+    public FakeEmailSender EmailSender { get; } = new();
+
+    public const string DashboardBaseUrl = "https://deployguard.example.com";
 
     public const string AdminEmail = "admin@example.com";
     public const string AdminPassword = "frase-secreta-de-teste-2026";
@@ -81,6 +86,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Auth:CookieSecure", "false"); // o TestServer usa http://localhost
         builder.UseSetting("Auth:BootstrapAdminEmail", AdminEmail);
         builder.UseSetting("Auth:BootstrapAdminPassword", AdminPassword);
+        builder.UseSetting("Email:SmtpHost", "smtp.example.com");
+        builder.UseSetting("PasswordReset:DashboardBaseUrl", DashboardBaseUrl);
         builder.UseSetting("Alerting:DispatcherEnabled", "false");
         builder.UseSetting("Alerting:FailureThreshold", "2");
         builder.UseSetting("Alerting:MaxDeliveryAttempts", "2");
@@ -94,6 +101,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             services.AddSingleton<IHealthChecker>(HealthChecker);
             services.RemoveAll<IAlertSender>();
             services.AddSingleton<IAlertSender>(AlertSender);
+            services.RemoveAll<IEmailSender>();
+            services.AddSingleton<IEmailSender>(EmailSender);
         });
     }
 
@@ -184,6 +193,8 @@ public sealed class MultiInstanceApiFactory : ApiFactory
 }
 
 public sealed class AccountSecurityApiFactory : ApiFactory;
+
+public sealed class PasswordResetApiFactory : ApiFactory;
 
 public sealed class StatusPageApiFactory : ApiFactory
 {

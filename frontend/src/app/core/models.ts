@@ -171,7 +171,9 @@ export type AuditAction =
   | 'ApplicationUpdated'
   | 'ApplicationDeleted'
   | 'ApiKeyCreated'
-  | 'ApiKeyRevoked';
+  | 'ApiKeyRevoked'
+  | 'PasswordResetRequested'
+  | 'PasswordResetCompleted';
 
 export interface AuditEvent {
   id: number;

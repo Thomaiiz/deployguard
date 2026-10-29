@@ -655,6 +655,50 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
 - **Datas em UTC.** O servidor agrupa por dia em UTC para todo mundo ver as mesmas barras,
   independentemente do fuso.
 
+## Etapa 15 (nona fase): esqueci minha senha
+
+### O que mudou
+
+- Tabela nova `password_reset_tokens` (só o hash do token, validade e quando foi usado).
+- `POST /api/auth/forgot-password` e `POST /api/auth/reset-password`, ambas públicas.
+- Pasta `Email/`: envio por SMTP com o **MailKit**, fila em memória (`Channel`) e um
+  `BackgroundService` que envia com até 3 tentativas.
+- Docker Compose com o **Mailpit**, uma caixa de entrada de teste em `http://localhost:8025`.
+- No Angular: telas **Esqueci minha senha** e **Criar nova senha**, e o link na tela de login.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `dotnet add package MailKit` | Adiciona a biblioteca de e-mail. A versão 4.18.1 foi recusada no build: o NuGet Audit apontou uma vulnerabilidade numa dependência dela, e o `TreatWarningsAsErrors` transformou o aviso em erro. A 4.18.2 já vem corrigida. |
+| `dotnet ef migrations add AddPasswordReset` | Gera a migration da tabela `password_reset_tokens`. |
+| `docker compose up` e abrir `http://localhost:8025` | Interface do Mailpit, onde aparecem os e-mails que a API mandou. |
+| `curl -X POST localhost:8080/api/auth/forgot-password -H 'Content-Type: application/json' -d '{"email":"x@y.com"}'` | Pede o link. Teste com um e-mail que existe e com um que não existe: a resposta é idêntica. |
+
+### Conceitos
+
+- **Enumeração de contas, de novo.** Se a tela dissesse "e-mail não encontrado", qualquer um
+  descobriria quem tem conta. A resposta é sempre a mesma, e o envio fica para depois, numa fila, para
+  o **tempo** de resposta também não denunciar.
+- **Token como senha temporária.** Quem tem o link entra na conta. Por isso ele é aleatório de
+  verdade (`RandomNumberGenerator`, 256 bits), curto (30 min), de uso único e guardado só como hash.
+- **Por que SHA-256 e não PBKDF2 como na senha?** Senha é escolhida por gente e pode ser fraca, então
+  precisa de um hash lento. O token tem 256 bits aleatórios: ninguém adivinha por força bruta, e um
+  hash rápido basta.
+- **Uso único com UPDATE atômico.** `UPDATE ... SET UsedAt = agora WHERE Id = ... AND UsedAt IS NULL`.
+  O banco garante que só uma requisição altera a linha. É a mesma ideia do contador de senhas erradas
+  e do `SKIP LOCKED`.
+- **Fragmento da URL (`#`).** Não é enviado ao servidor. O token não fica em logs de acesso, em
+  proxies nem no cabeçalho `Referer`.
+- **Host header injection.** Nunca montar links de e-mail com o `Host` da requisição: quem faz a
+  requisição escolhe esse valor.
+- **E-mail bombing.** Sem limite por usuário, um robô usaria o DeployGuard para encher a caixa de
+  alguém. Limite: 3 pedidos por hora por conta, além do limite por IP.
+- **Mailpit.** Um servidor SMTP falso para desenvolvimento: recebe tudo e mostra numa página web, sem
+  mandar nada para a internet.
+- **NuGet Audit.** O `dotnet restore` compara os pacotes com a base de vulnerabilidades do GitHub.
+  Com `TreatWarningsAsErrors`, uma dependência vulnerável quebra o build antes de chegar à produção.
+
 ---
 
 ## Perguntas de entrevista
@@ -801,3 +845,9 @@ e não pode ser editado pela API.
 Com uma rota pública separada, com DTO próprio e mínimo (sem ids, URLs ou erros), publicação
 opt-in por aplicação, rate limit próprio e output cache de 30 s, para que muitos acessos não virem
 muitas consultas pesadas no banco.
+
+**Como você implementou o "esqueci minha senha" com segurança?**
+Resposta igual para qualquer e-mail, envio assíncrono para não vazar pelo tempo, token aleatório de
+256 bits guardado como hash, validade de 30 minutos, uso único com UPDATE atômico, link com endereço
+fixo (contra host header injection) e, depois da troca, um security stamp novo que derruba todas as
+sessões.
