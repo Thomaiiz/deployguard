@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using DeployGuard.Api.Alerting;
 using DeployGuard.Api.Applications;
+using DeployGuard.Api.Auth;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.History;
 using DeployGuard.Api.Incidents;
@@ -27,6 +28,7 @@ builder.Services.AddMonitoring(builder.Configuration);
 builder.Services.AddAlerting(builder.Configuration);
 builder.Services.AddSingleton<ApplicationValidator>();
 builder.Services.AddApiRateLimiting(builder.Configuration);
+builder.Services.AddDeployGuardAuth(builder.Configuration);
 
 builder.Services.ConfigureHttpJsonOptions(json =>
     json.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -58,10 +60,12 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseApiSecurityHeaders();
 app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi(); // documento OpenAPI em /openapi/v1.json
+    app.MapOpenApi().AllowAnonymous(); // documento OpenAPI em /openapi/v1.json
 }
 
 if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
@@ -72,9 +76,13 @@ if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
     await scope.ServiceProvider.GetRequiredService<DeployGuardDbContext>().Database.MigrateAsync();
 }
 
-app.MapHealthChecks("/health");
+await AuthSetup.EnsureBootstrapAdminAsync(app.Services, app.Logger);
+
+app.MapHealthChecks("/health").AllowAnonymous();
 
 var api = app.MapGroup("/api").RequireRateLimiting(RateLimitingSetup.ReadPolicy);
+api.MapAuthEndpoints();
+api.MapUserEndpoints();
 api.MapApplicationEndpoints();
 api.MapHistoryEndpoints();
 api.MapIncidentEndpoints();

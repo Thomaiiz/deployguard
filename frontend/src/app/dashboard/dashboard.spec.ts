@@ -1,7 +1,9 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { of, throwError } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
+import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
 import { Incident, MonitoredApplication } from '../core/models';
 import { Dashboard } from './dashboard';
@@ -23,12 +25,13 @@ function app(overrides: Partial<MonitoredApplication>): MonitoredApplication {
   };
 }
 
-async function setup(api: Partial<DeployGuardApi>) {
+async function setup(api: Partial<DeployGuardApi>, isAdmin = true) {
   TestBed.configureTestingModule({
     imports: [Dashboard],
     providers: [
       provideRouter([]),
       { provide: DeployGuardApi, useValue: { listIncidents: () => of([]), ...api } },
+      { provide: AuthService, useValue: { isAdmin: signal(isAdmin) } },
     ],
   });
   const fixture = TestBed.createComponent(Dashboard);
@@ -116,5 +119,15 @@ describe('Dashboard', () => {
   it('hides the banner when there are no incidents', async () => {
     const element = await setup({ listApplications: () => of([app({})]) });
     expect(element.querySelector('[data-testid=incident-banner]')).toBeNull();
+  });
+
+  it('shows the register button only to admins', async () => {
+    const asAdmin = await setup({ listApplications: () => of([]) }, true);
+    expect(asAdmin.textContent).toContain('Nova aplicação');
+    TestBed.resetTestingModule();
+
+    const asViewer = await setup({ listApplications: () => of([]) }, false);
+    expect(asViewer.textContent).not.toContain('Nova aplicação');
+    expect(asViewer.textContent).toContain('Peça a um administrador');
   });
 });

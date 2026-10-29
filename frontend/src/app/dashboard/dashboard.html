@@ -5,13 +5,15 @@
   </div>
   <div class="actions">
     <button type="button" class="btn btn--ghost" (click)="refresh()">Atualizar</button>
-    <button type="button" class="btn" (click)="showForm.set(!showForm())">
-      {{ showForm() ? 'Fechar' : 'Nova aplicação' }}
-    </button>
+    @if (auth.isAdmin()) {
+      <button type="button" class="btn" (click)="showForm.set(!showForm())">
+        {{ showForm() ? 'Fechar' : 'Nova aplicação' }}
+      </button>
+    }
   </div>
 </section>
 
-@if (showForm()) {
+@if (showForm() && auth.isAdmin()) {
   <dg-register-application-form (registered)="onRegistered()" />
 }
 
@@ -63,7 +65,11 @@
 } @else if (applications().length === 0) {
   <div class="empty">
     <p>Nenhuma aplicação cadastrada ainda.</p>
-    <button type="button" class="btn" (click)="showForm.set(true)">Cadastrar a primeira</button>
+    @if (auth.isAdmin()) {
+      <button type="button" class="btn" (click)="showForm.set(true)">Cadastrar a primeira</button>
+    } @else {
+      <p class="muted">Peça a um administrador para cadastrar as aplicações.</p>
+    }
   </div>
 } @else {
   <ul class="app-grid">

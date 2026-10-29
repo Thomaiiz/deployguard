@@ -18,7 +18,7 @@ public class ApplicationsApiTests(ApiFactory factory) : IClassFixture<ApiFactory
         Converters = { new JsonStringEnumConverter() },
     };
 
-    private readonly HttpClient _client = factory.CreateClient();
+    private readonly HttpClient _client = factory.CreateAdminClient();
 
     private async Task<ApplicationResponse> CreateAsync(string name, string url = "https://api.example.com/health", int? interval = 30)
     {

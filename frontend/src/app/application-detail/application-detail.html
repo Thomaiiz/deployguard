@@ -15,12 +15,14 @@
         {{ app.lastCheckedAt | relativeTime: now() }}
       </p>
     </div>
-    <div class="actions">
-      <button type="button" class="btn btn--ghost" (click)="toggleEnabled(app)">
-        {{ app.isEnabled ? 'Pausar' : 'Retomar' }}
-      </button>
-      <button type="button" class="btn btn--danger" (click)="remove(app)">Remover</button>
-    </div>
+    @if (auth.isAdmin()) {
+      <div class="actions">
+        <button type="button" class="btn btn--ghost" (click)="toggleEnabled(app)">
+          {{ app.isEnabled ? 'Pausar' : 'Retomar' }}
+        </button>
+        <button type="button" class="btn btn--danger" (click)="remove(app)">Remover</button>
+      </div>
+    }
   </section>
 
   @if (stats(); as s) {

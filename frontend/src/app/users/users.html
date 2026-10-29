@@ -1,0 +1,81 @@
+<section class="page-header">
+  <div>
+    <h1>Usuários</h1>
+    <p class="muted">Admins cadastram e removem aplicações; viewers só acompanham.</p>
+  </div>
+</section>
+
+<form class="card form" [formGroup]="form" (ngSubmit)="submit()" novalidate>
+  <h2>Novo usuário</h2>
+
+  <label>
+    E-mail
+    <input type="email" formControlName="email" autocomplete="off" />
+    @if (showError('email')) {
+      <span class="field-error">Informe um e-mail válido.</span>
+    }
+    @for (message of serverErrors()['email'] ?? []; track message) {
+      <span class="field-error">{{ message }}</span>
+    }
+  </label>
+
+  <label>
+    Senha inicial
+    <input type="password" formControlName="password" autocomplete="new-password" />
+    @if (showError('password')) {
+      <span class="field-error">Use pelo menos 12 caracteres.</span>
+    }
+    @for (message of serverErrors()['password'] ?? []; track message) {
+      <span class="field-error">{{ message }}</span>
+    }
+  </label>
+
+  <label>
+    Papel
+    <select formControlName="role">
+      <option value="Viewer">Viewer (somente leitura)</option>
+      <option value="Admin">Admin</option>
+    </select>
+  </label>
+
+  <button type="submit" class="btn" [disabled]="submitting()">
+    {{ submitting() ? 'Salvando…' : 'Criar usuário' }}
+  </button>
+</form>
+
+@if (error(); as message) {
+  <p class="alert" role="alert">{{ message }}</p>
+}
+
+<section class="card">
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>E-mail</th>
+          <th>Papel</th>
+          <th>Criado em</th>
+          <th>Último login</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (user of users(); track user.id) {
+          <tr data-testid="user-row">
+            <td>{{ user.email }}</td>
+            <td>{{ user.role }}</td>
+            <td>{{ user.createdAt | date: 'dd/MM/yyyy' }}</td>
+            <td>{{ user.lastLoginAt ? (user.lastLoginAt | date: 'dd/MM/yyyy HH:mm') : '—' }}</td>
+            <td>
+              @if (user.id !== auth.user()?.id) {
+                <button type="button" class="btn btn--danger" (click)="remove(user)">
+                  Remover
+                </button>
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</section>
