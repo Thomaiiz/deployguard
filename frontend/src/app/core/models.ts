@@ -148,6 +148,44 @@ export interface CurrentUser {
 export interface User extends CurrentUser {
   createdAt: string;
   lastLoginAt: string | null;
+  /** Preenchido só enquanto a conta estiver bloqueada por tentativas erradas. */
+  lockedUntil: string | null;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+export type AuditAction =
+  | 'LoginSucceeded'
+  | 'LoginFailed'
+  | 'AccountLocked'
+  | 'PasswordChanged'
+  | 'UserCreated'
+  | 'UserDeleted'
+  | 'UserUnlocked'
+  | 'ApplicationCreated'
+  | 'ApplicationUpdated'
+  | 'ApplicationDeleted'
+  | 'ApiKeyCreated'
+  | 'ApiKeyRevoked';
+
+export interface AuditEvent {
+  id: number;
+  at: string;
+  action: AuditAction;
+  actorEmail: string;
+  targetType: string | null;
+  targetId: string | null;
+  details: string | null;
+  ipAddress: string | null;
+}
+
+export interface AuditPage {
+  items: AuditEvent[];
+  /** Passe como "before" para buscar a próxima página; null quando acabou. */
+  nextBefore: number | null;
 }
 
 export interface CreateUserRequest {

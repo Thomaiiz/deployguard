@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { errorMessage, fieldErrors } from './problem-details';
+import { errorMessage, fieldErrors, fullErrorMessage } from './problem-details';
 
 describe('problem details helpers', () => {
   it('extracts field errors from a validation problem', () => {
@@ -22,5 +22,15 @@ describe('problem details helpers', () => {
       error: { title: 'Limite', detail: 'Máximo 100.' },
     });
     expect(errorMessage(error)).toBe('Máximo 100.');
+  });
+
+  it('joins title and detail for messages like a refused login', () => {
+    const error = new HttpErrorResponse({
+      status: 401,
+      error: { title: 'E-mail ou senha inválidos.', detail: 'Depois de 5 tentativas, bloqueia.' },
+    });
+    expect(fullErrorMessage(error)).toBe(
+      'E-mail ou senha inválidos. Depois de 5 tentativas, bloqueia.',
+    );
   });
 });

@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angu
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService, safeReturnUrl } from '../core/auth';
-import { errorMessage } from '../core/problem-details';
+import { fullErrorMessage } from '../core/problem-details';
 
 @Component({
   selector: 'dg-login',
@@ -40,7 +40,7 @@ export class Login {
       error: (error) => {
         this.submitting.set(false);
         this.form.controls.password.reset(); // não deixa a senha errada no campo
-        this.error.set(errorMessage(error));
+        this.error.set(fullErrorMessage(error));
       },
     });
   }

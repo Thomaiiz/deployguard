@@ -98,6 +98,7 @@ var api = app.MapGroup("/api").RequireRateLimiting(RateLimitingSetup.ReadPolicy)
 api.MapAuthEndpoints();
 api.MapUserEndpoints();
 api.MapApiKeyEndpoints();
+api.MapAuditEndpoints();
 api.MapApplicationEndpoints();
 api.MapHistoryEndpoints();
 api.MapIncidentEndpoints();

@@ -1,0 +1,57 @@
+<section class="page-header">
+  <div>
+    <h1>Auditoria</h1>
+    <p class="muted">
+      Quem fez o quê, quando e de onde. Os registros não podem ser editados nem apagados pela API.
+    </p>
+  </div>
+  <label class="filter">
+    Ação
+    <select (change)="onFilter($any($event.target).value)" data-testid="audit-filter">
+      <option value="">Todas</option>
+      @for (action of actions; track action) {
+        <option [value]="action">{{ labels[action] }}</option>
+      }
+    </select>
+  </label>
+</section>
+
+@if (error(); as message) {
+  <p class="alert" role="alert">{{ message }}</p>
+}
+
+<section class="card">
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Quando</th>
+          <th>Ação</th>
+          <th>Quem</th>
+          <th>Detalhes</th>
+          <th>IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (event of events(); track event.id) {
+          <tr data-testid="audit-row" [class.row--warning]="warnings.has(event.action)">
+            <td>{{ event.at | date: 'dd/MM/yyyy HH:mm:ss' }}</td>
+            <td>{{ labels[event.action] }}</td>
+            <td>{{ event.actorEmail }}</td>
+            <td>{{ event.details ?? '—' }}</td>
+            <td>
+              <span class="code">{{ event.ipAddress ?? '—' }}</span>
+            </td>
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="5" class="muted">Nenhum registro.</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+  @if (nextBefore() !== null) {
+    <button type="button" class="btn btn--ghost" (click)="loadMore()">Carregar mais</button>
+  }
+</section>

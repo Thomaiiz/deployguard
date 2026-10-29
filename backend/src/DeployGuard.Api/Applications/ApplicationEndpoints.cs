@@ -60,6 +60,7 @@ public static class ApplicationEndpoints
 
     private static async Task<IResult> CreateAsync(
         CreateApplicationRequest request,
+        HttpContext http,
         DeployGuardDbContext db,
         ApplicationValidator validator,
         IOptionsMonitor<MonitoringOptions> options,
@@ -96,6 +97,7 @@ public static class ApplicationEndpoints
         };
 
         db.Applications.Add(app);
+        Audit.Record(db, http, AuditAction.ApplicationCreated, "application", app.Id.ToString(), $"{app.Name}: {app.HealthCheckUrl}");
         await db.SaveChangesAsync(ct);
 
         return Results.CreatedAtRoute("GetApplication", new { id = app.Id }, ApplicationResponse.From(app, null));
@@ -104,6 +106,7 @@ public static class ApplicationEndpoints
     private static async Task<IResult> UpdateAsync(
         Guid id,
         UpdateApplicationRequest request,
+        HttpContext http,
         DeployGuardDbContext db,
         ApplicationValidator validator,
         TimeProvider time,
@@ -142,15 +145,33 @@ public static class ApplicationEndpoints
             app.NextCheckAt = time.GetUtcNow();
         }
 
+        var changes = string.Join(", ", db.Entry(app).Properties
+            .Where(p => p.IsModified && p.Metadata.Name is "Name" or "HealthCheckUrl" or "CheckIntervalSeconds" or "IsEnabled")
+            .Select(p => $"{p.Metadata.Name}: {p.OriginalValue} → {p.CurrentValue}"));
+        if (changes.Length > 0)
+        {
+            Audit.Record(db, http, AuditAction.ApplicationUpdated, "application", app.Id.ToString(), $"{app.Name}. {changes}");
+        }
+
         await db.SaveChangesAsync(ct);
         return Results.Ok(ApplicationResponse.From(app, null));
     }
 
-    private static async Task<IResult> DeleteAsync(Guid id, DeployGuardDbContext db, CancellationToken ct)
+    private static async Task<IResult> DeleteAsync(Guid id, HttpContext http, DeployGuardDbContext db, CancellationToken ct)
     {
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var name = await db.Applications.Where(a => a.Id == id).Select(a => a.Name).FirstOrDefaultAsync(ct);
+        if (name is null)
+        {
+            return Results.NotFound();
+        }
+
         // ExecuteDeleteAsync gera um DELETE direto, sem carregar a entidade.
         // O histórico é removido em cascata pela foreign key.
-        var deleted = await db.Applications.Where(a => a.Id == id).ExecuteDeleteAsync(ct);
-        return deleted == 0 ? Results.NotFound() : Results.NoContent();
+        await db.Applications.Where(a => a.Id == id).ExecuteDeleteAsync(ct);
+        Audit.Record(db, http, AuditAction.ApplicationDeleted, "application", id.ToString(), name);
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return Results.NoContent();
     }
 }

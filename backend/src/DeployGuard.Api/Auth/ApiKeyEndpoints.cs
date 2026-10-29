@@ -29,7 +29,7 @@ public static class ApiKeyEndpoints
         Results.Ok((await db.ApiKeys.AsNoTracking().OrderBy(k => k.Name).ToListAsync(ct)).Select(ApiKeyResponse.From));
 
     private static async Task<IResult> CreateAsync(
-        CreateApiKeyRequest request, ClaimsPrincipal principal, DeployGuardDbContext db, TimeProvider time, CancellationToken ct)
+        CreateApiKeyRequest request, ClaimsPrincipal principal, HttpContext http, DeployGuardDbContext db, TimeProvider time, CancellationToken ct)
     {
         var name = request.Name?.Trim();
         if (string.IsNullOrEmpty(name) || name.Length > MaxNameLength || name.Any(char.IsControl))
@@ -57,12 +57,24 @@ public static class ApiKeyEndpoints
         };
 
         db.ApiKeys.Add(apiKey);
+        Audit.Record(db, http, AuditAction.ApiKeyCreated, "api-key", apiKey.Id.ToString(), $"{apiKey.Name} ({apiKey.Prefix}…)");
         await db.SaveChangesAsync(ct);
 
         return Results.Created($"/api/api-keys/{apiKey.Id}", new CreatedApiKeyResponse(ApiKeyResponse.From(apiKey), key));
     }
 
     /// <summary>Revogar = apagar. A próxima chamada com essa chave já recebe 401.</summary>
-    private static async Task<IResult> DeleteAsync(Guid id, DeployGuardDbContext db, CancellationToken ct) =>
-        await db.ApiKeys.Where(k => k.Id == id).ExecuteDeleteAsync(ct) == 0 ? Results.NotFound() : Results.NoContent();
+    private static async Task<IResult> DeleteAsync(Guid id, HttpContext http, DeployGuardDbContext db, CancellationToken ct)
+    {
+        var key = await db.ApiKeys.FirstOrDefaultAsync(k => k.Id == id, ct);
+        if (key is null)
+        {
+            return Results.NotFound();
+        }
+
+        db.ApiKeys.Remove(key);
+        Audit.Record(db, http, AuditAction.ApiKeyRevoked, "api-key", key.Id.ToString(), $"{key.Name} ({key.Prefix}…)");
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    }
 }

@@ -1,6 +1,8 @@
 import { Routes } from '@angular/router';
+import { Account } from './account/account';
 import { ApiKeys } from './api-keys/api-keys';
 import { ApplicationDetail } from './application-detail/application-detail';
+import { Audit } from './audit/audit';
 import { adminGuard, authGuard, guestGuard } from './core/auth.guard';
 import { Dashboard } from './dashboard/dashboard';
 import { Login } from './login/login';
@@ -19,6 +21,13 @@ export const routes: Routes = [
         component: Users,
         canActivate: [adminGuard],
         title: 'DeployGuard · Usuários',
+      },
+      { path: 'account', component: Account, title: 'DeployGuard · Minha conta' },
+      {
+        path: 'audit',
+        component: Audit,
+        canActivate: [adminGuard],
+        title: 'DeployGuard · Auditoria',
       },
       {
         path: 'keys',

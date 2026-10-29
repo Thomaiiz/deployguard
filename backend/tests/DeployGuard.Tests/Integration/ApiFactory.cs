@@ -175,3 +175,5 @@ public sealed class MultiInstanceApiFactory : ApiFactory
         builder.UseSetting("Monitoring:MaxConcurrentChecks", "2");
     }
 }
+
+public sealed class AccountSecurityApiFactory : ApiFactory;

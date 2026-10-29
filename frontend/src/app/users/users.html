@@ -56,6 +56,7 @@
           <th>Papel</th>
           <th>Criado em</th>
           <th>Último login</th>
+          <th>Situação</th>
           <th></th>
         </tr>
       </thead>
@@ -67,6 +68,20 @@
             <td>{{ user.createdAt | date: 'dd/MM/yyyy' }}</td>
             <td>{{ user.lastLoginAt ? (user.lastLoginAt | date: 'dd/MM/yyyy HH:mm') : '—' }}</td>
             <td>
+              @if (user.lockedUntil) {
+                <span class="badge badge--down" data-testid="locked"
+                  >Bloqueado até {{ user.lockedUntil | date: 'HH:mm' }}</span
+                >
+              } @else {
+                <span class="muted">Ativo</span>
+              }
+            </td>
+            <td class="row-actions">
+              @if (user.lockedUntil) {
+                <button type="button" class="btn btn--ghost" (click)="unlock(user)">
+                  Desbloquear
+                </button>
+              }
               @if (user.id !== auth.user()?.id) {
                 <button type="button" class="btn btn--danger" (click)="remove(user)">
                   Remover

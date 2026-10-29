@@ -8,8 +8,11 @@
       @if (auth.isAdmin()) {
         <a routerLink="/users">Usuários</a>
         <a routerLink="/keys">Chaves de API</a>
+        <a routerLink="/audit">Auditoria</a>
       }
-      <span class="muted" data-testid="current-user">{{ user.email }} · {{ user.role }}</span>
+      <a routerLink="/account" class="muted" data-testid="current-user" title="Minha conta"
+        >{{ user.email }} · {{ user.role }}</a
+      >
       <button type="button" class="btn btn--ghost" (click)="logout()">Sair</button>
     </nav>
   }

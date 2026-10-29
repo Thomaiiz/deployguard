@@ -4,6 +4,9 @@ import { Observable } from 'rxjs';
 import {
   ApiKey,
   ApplicationStats,
+  AuditAction,
+  AuditPage,
+  ChangePasswordRequest,
   CreatedApiKey,
   CreateApplicationRequest,
   CreateDeploymentRequest,
@@ -95,6 +98,27 @@ export class DeployGuardApi {
 
   deleteUser(id: string): Observable<void> {
     return this.http.delete<void>(`/api/users/${encodeURIComponent(id)}`);
+  }
+
+  unlockUser(id: string): Observable<void> {
+    return this.http.post<void>(`/api/users/${encodeURIComponent(id)}/unlock`, null);
+  }
+
+  changePassword(request: ChangePasswordRequest): Observable<void> {
+    return this.http.post<void>('/api/auth/password', request);
+  }
+
+  listAudit(
+    options: { limit?: number; before?: number; action?: AuditAction } = {},
+  ): Observable<AuditPage> {
+    let params = new HttpParams().set('limit', options.limit ?? 50);
+    if (options.before !== undefined) {
+      params = params.set('before', options.before);
+    }
+    if (options.action) {
+      params = params.set('action', options.action);
+    }
+    return this.http.get<AuditPage>('/api/audit', { params });
   }
 
   listDeployments(applicationId: string, limit = 20): Observable<Deployment[]> {

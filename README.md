@@ -20,6 +20,9 @@ Funcionalidades atuais:
 - **Etapa 6:** **várias instâncias da API**. O Compose sobe duas cópias atrás do nginx. Elas dividem
   as verificações e os alertas pelo banco (`FOR UPDATE SKIP LOCKED`), sem verificar nada em dobro,
   e os avisos ao vivo chegam a todas pelo `LISTEN/NOTIFY` do PostgreSQL.
+- **Etapa 7:** **conta e segurança do login**. Cada usuário troca a própria senha (e as outras
+  sessões caem na hora), a conta é bloqueada por 15 minutos depois de 5 senhas erradas seguidas, e
+  um **registro de auditoria** mostra ao Admin quem fez o quê, quando e de qual IP.
 
 | Camada | Tecnologia |
 |---|---|
@@ -492,11 +495,26 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
   lê o cookie (um XSS não rouba a sessão) e o navegador não o envia em requisições vindas de
   outros sites (CSRF). Assinatura HMAC-SHA256 com algoritmo fixo, emissor, audiência e validade
   conferidos.
-- **Revogação imediata.** A cada requisição a API confere se o usuário do token ainda existe e tem
-  o mesmo papel. Remover alguém corta o acesso na hora, sem esperar o token expirar.
-- **Contra força bruta e enumeração.** Login limitado a 5 tentativas por minuto por IP. A mensagem
-  de erro é a mesma para e-mail inexistente e senha errada, e o tempo de resposta também (a API
-  calcula um hash mesmo quando o e-mail não existe).
+- **Revogação imediata.** A cada requisição a API confere se o usuário do token ainda existe, tem o
+  mesmo papel e o mesmo **carimbo de segurança** (`SecurityStamp`, que vai dentro do token). Remover
+  alguém corta o acesso na hora. Trocar a senha gera um carimbo novo: as sessões abertas em outros
+  navegadores caem, e a sessão de quem trocou recebe um cookie novo.
+- **Contra força bruta e enumeração.** Duas camadas:
+  - **Por IP:** login limitado a 5 tentativas por minuto (rate limit).
+  - **Por conta:** depois de 5 senhas erradas seguidas, a conta fica bloqueada por 15 minutos,
+    mesmo para a senha certa e mesmo vindo de outro IP (protege contra ataques distribuídos). O
+    bloqueio é temporário de propósito: um bloqueio permanente deixaria qualquer um trancar a conta
+    de outra pessoa errando a senha. O Admin pode desbloquear antes. O contador sobe num único
+    `UPDATE` atômico, então tentativas simultâneas (ou em réplicas diferentes) não se perdem.
+  - A resposta é **idêntica** para e-mail inexistente, senha errada e conta bloqueada, inclusive no
+    tempo (a API calcula um hash mesmo quando o e-mail não existe). Quem ataca não descobre quais
+    contas existem nem quais estão bloqueadas.
+- **Troca de senha** exige a senha atual, segue a mesma política e não aceita repetir a senha
+  atual. Tem o mesmo rate limit do login, para quem roubou uma sessão não testar senhas à vontade.
+- **Auditoria.** Logins (certos e recusados), bloqueios, troca de senha, usuários, aplicações e
+  chaves de API ficam registrados com quem, quando, o quê e o IP. O registro entra no **mesmo
+  `SaveChanges`** da ação (ou os dois são gravados, ou nenhum), nunca contém senha, chave ou token,
+  e a API não tem rota para editar nem apagar registros. Só Admins consultam.
 - **Sem open redirect.** Depois do login, o dashboard só volta para caminhos internos.
 - **Chaves de API para máquinas** (o CI registrando deploys). São 32 bytes aleatórios
   (`dg_...`), mostradas **uma única vez** e guardadas só como hash SHA-256. Valem apenas para
@@ -532,6 +550,9 @@ marcadas com **Admin** respondem `403` para Viewers.
 | `GET` | `/users` | **Admin.** Lista usuários (nunca devolve o hash da senha) |
 | `POST` | `/users` | **Admin.** Cria (`email`, `password`, `role`: `Admin` ou `Viewer`, padrão `Viewer`) |
 | `DELETE` | `/users/{id}` | **Admin.** Remove (não é possível remover a si mesmo) |
+| `POST` | `/users/{id}/unlock` | **Admin.** Desbloqueia uma conta bloqueada por senhas erradas |
+| `POST` | `/auth/password` | Troca a própria senha (`currentPassword`, `newPassword`). Encerra as outras sessões |
+| `GET` | `/audit` | **Admin.** Registro de auditoria, mais recente primeiro. Query: `limit` (até 200), `before` (cursor), `action` |
 | `GET` | `/applications` | Lista aplicações com estado atual e disponibilidade em 24h |
 | `GET` | `/applications/{id}` | Detalhe de uma aplicação |
 | `POST` | `/applications` | **Admin.** Cadastra (`name`, `healthCheckUrl`, `checkIntervalSeconds?`) |
@@ -621,6 +642,8 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Auth:CookieSecure` | `true` | Cookie só em HTTPS (navegadores tratam `localhost` como seguro) |
 | `Auth:BootstrapAdminEmail` / `BootstrapAdminPassword` | (vazio, segredo) | Primeiro admin, criado só se não houver nenhum usuário |
 | `Auth:Issuer` / `Audience` | `deployguard` / `deployguard-dashboard` | Conferidos em todo token |
+| `Auth:MaxFailedLogins` | `5` | Senhas erradas seguidas antes de bloquear a conta |
+| `Auth:LockoutMinutes` | `15` | Duração do bloqueio |
 | `ReverseProxy:KnownNetworks` | `[]` | Redes (CIDR) cujo `X-Forwarded-For` é confiável |
 | `Alerting:FailureThreshold` | `2` | Falhas consecutivas para abrir um incidente |
 | `Alerting:Webhooks` | `[]` | Lista de `{ Name, Url, Format }`. `Format`: `Slack`, `Discord` ou `Generic`. URL vazia = canal desligado |
@@ -649,7 +672,7 @@ cd frontend
 npm run test:ci
 ```
 
-**Backend (161 testes)**
+**Backend (168 testes)**
 
 - Unidade: `IpAddressGuard` (faixas privadas, IPv6, IPv4 mapeado), `UrlSafetyPolicy` (esquemas,
   credenciais, portas, curingas, IP literal), `SafeSocketConnector` (DNS rebinding, inclusive com um
@@ -669,11 +692,16 @@ npm run test:ci
   simples), uma reserva some até o prazo vencer, dois dispatchers entregam cada alerta uma vez só,
   um navegador conectado na instância B recebe o aviso de uma verificação feita pela A, um `NOTIFY`
   de transação desfeita nunca é entregue, e duas subidas simultâneas aplicam as migrations uma vez.
+- Conta e auditoria: bloqueio depois de 5 erros e desbloqueio pelo Admin, fim automático do
+  bloqueio, 5 tentativas simultâneas todas contadas, respostas idênticas para e-mail inexistente,
+  senha errada e conta bloqueada, troca de senha derrubando a outra sessão e mantendo a atual, e a
+  auditoria registrando quem fez o quê sem nunca guardar a senha digitada.
 
-**Frontend (52 testes)**: serviço HTTP com `HttpTestingController`, dashboard (cards, resumo, estado
+**Frontend (60 testes)**: serviço HTTP com `HttpTestingController`, dashboard (cards, resumo, estado
 vazio, erro de rede, escape de HTML, banner de incidentes, avisos ao vivo), canal ao vivo com um
 `EventSource` falso (reconexão e conexão compartilhada), formulário (validação local e erros vindos da API), badge,
-gráfico e pipe de tempo relativo.
+gráfico, pipe de tempo relativo, troca de senha (confirmação e erros da API), desbloqueio na tela de
+usuários e auditoria (rótulos, filtro e paginação).
 
 **GitHub Actions** (`.github/workflows/ci.yml`) roda em todo push e PR: build e testes do backend com
 PostgreSQL como service container, auditoria de pacotes, formatação, testes e build do Angular,
@@ -704,7 +732,9 @@ frontend/
   src/app/
     core/             modelos, cliente da API, canal ao vivo, Problem Details, sessão, guards, interceptor
     login/            tela de login
-    users/            gestão de usuários (só Admin)
+    users/            gestão de usuários e desbloqueio de contas (só Admin)
+    account/          "Minha conta": troca de senha
+    audit/            registro de auditoria (só Admin)
     api-keys/         chaves de API para o CI (só Admin)
     dashboard/        lista de aplicações e formulário de cadastro
     application-detail/  estatísticas, gráfico de latência e histórico
@@ -719,8 +749,10 @@ docker-compose.yml
 ## Limitações conhecidas e próximos passos
 
 - **Login corporativo (SSO/OIDC)** com Entra ID, Google ou Keycloak, e MFA.
-- **Troca de senha** pelo próprio usuário e bloqueio de conta após muitas falhas (hoje só há o
-  rate limit por IP).
+- **Recuperação de senha por e-mail** ("esqueci minha senha"). Hoje um Admin remove e recria o
+  usuário.
+- **Retenção da auditoria**: os registros crescem sem limite. Em produção, guardar por um prazo
+  definido (ex.: 1 ano) e exportar para um sistema de logs (SIEM).
 - **Limites por instância**: o rate limit e o limite de conexões ao vivo ficam na memória de cada
   réplica, então com duas réplicas o teto efetivo dobra. Um limite global exigiria um contador
   compartilhado (Redis, por exemplo).
