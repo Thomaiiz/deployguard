@@ -42,6 +42,11 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     protected virtual int MaxApplications => 5;
 
+    protected virtual int PublicRequestsPerMinute => 1_000;
+
+    /// <summary>Sem cache por padrão: cada teste quer ver o estado atual do banco.</summary>
+    protected virtual int StatusCacheSeconds => 0;
+
     public async Task InitializeAsync()
     {
         var baseConnection = Environment.GetEnvironmentVariable("DEPLOYGUARD_TEST_CONNECTION");
@@ -70,6 +75,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("RateLimiting:WriteRequestsPerMinute", WriteRequestsPerMinute.ToString());
         builder.UseSetting("RateLimiting:ReadRequestsPerMinute", "1000");
         builder.UseSetting("RateLimiting:LoginRequestsPerMinute", LoginRequestsPerMinute.ToString());
+        builder.UseSetting("RateLimiting:PublicRequestsPerMinute", PublicRequestsPerMinute.ToString());
+        builder.UseSetting("StatusPage:CacheSeconds", StatusCacheSeconds.ToString());
         builder.UseSetting("Auth:JwtSigningKey", "chave-de-teste-com-pelo-menos-32-caracteres");
         builder.UseSetting("Auth:CookieSecure", "false"); // o TestServer usa http://localhost
         builder.UseSetting("Auth:BootstrapAdminEmail", AdminEmail);
@@ -177,3 +184,18 @@ public sealed class MultiInstanceApiFactory : ApiFactory
 }
 
 public sealed class AccountSecurityApiFactory : ApiFactory;
+
+public sealed class StatusPageApiFactory : ApiFactory
+{
+    protected override int MaxApplications => 20;
+}
+
+public sealed class CachedStatusPageApiFactory : ApiFactory
+{
+    protected override int StatusCacheSeconds => 30;
+}
+
+public sealed class StrictStatusPageApiFactory : ApiFactory
+{
+    protected override int PublicRequestsPerMinute => 3;
+}

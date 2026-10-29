@@ -23,6 +23,9 @@ Funcionalidades atuais:
 - **Etapa 7:** **conta e segurança do login**. Cada usuário troca a própria senha (e as outras
   sessões caem na hora), a conta é bloqueada por 15 minutos depois de 5 senhas erradas seguidas, e
   um **registro de auditoria** mostra ao Admin quem fez o quê, quando e de qual IP.
+- **Etapa 8:** **página de status pública** em `/status`, aberta sem login. O Admin escolhe quais
+  aplicações aparecem, e o visitante vê só o nome, a situação e uma barra por dia com a
+  disponibilidade dos últimos 30 dias. URLs, erros e latências ficam de fora.
 
 | Camada | Tecnologia |
 |---|---|
@@ -295,6 +298,27 @@ sequenceDiagram
   e encontra tudo aplicado. A criação do admin inicial também pode correr em paralelo; a
   restrição de e-mail único garante que só uma consegue, e a outra só registra no log.
 
+### Página de status pública
+
+A rota `GET /api/public/status` é a **única rota de dados sem login**. Por isso ela foi pensada
+como uma vitrine, não como uma janela para dentro do sistema:
+
+- **Publicar é opt-in.** Cada aplicação tem `IsPublic`, desligado por padrão. O Admin publica pelo
+  botão na tela da aplicação, e a mudança vai para a auditoria.
+- **Contrato próprio e mínimo.** A resposta usa DTOs separados (`PublicStatusResponse`) com nome,
+  situação, disponibilidade e uma barra por dia. Nada de `Id`, URL, latência ou mensagem de erro,
+  que revelariam a infraestrutura interna (ex.: `connect 10.0.0.5:443 timed out`). Um teste confere
+  que nada disso aparece no JSON.
+- **Queda só com incidente aberto.** Uma falha isolada aparece como "Instável", e "Fora do ar" só
+  quando há incidente (várias falhas seguidas). A página pública não pisca vermelho a cada oscilação.
+- **Cache de saída + rate limit próprio.** A disponibilidade por dia é um `GROUP BY` sobre milhares
+  de resultados. Para que muitos visitantes não virem muitas consultas, a resposta fica 30 s no
+  **output cache** do ASP.NET Core (e o navegador recebe `Cache-Control: public, max-age=30`). A
+  rota tem cota própria de 30 requisições por minuto por IP.
+- **Sem tempo real.** O canal ao vivo exige login, então a página faz polling a cada minuto.
+- **Dias em UTC.** O histórico tem `StatusPage:HistoryDays` (padrão 90) limitado pela retenção
+  (`Monitoring:ResultRetentionDays`, padrão 30): não dá para mostrar o que já foi apagado.
+
 ### Modelo de dados
 
 ```mermaid
@@ -452,8 +476,8 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
 
 ### 4. Limites
 
-- **Rate limiting por IP** (janela fixa): 120 leituras/min e 20 escritas/min. Acima disso, `429`
-  com `Retry-After`.
+- **Rate limiting por IP** (janela fixa): 120 leituras/min, 20 escritas/min e 30/min na página
+  de status pública. Acima disso, `429` com `Retry-After`.
 - **X-Forwarded-For só é confiado vindo do nginx** (`ReverseProxy:KnownNetworks`), e o nginx
   sobrescreve o cabeçalho. Um cliente não consegue trocar de IP para fugir do limite.
 - **Máximo de aplicações** (`MaxApplications`, padrão 100) e **intervalo mínimo** de 30 s: cada
@@ -555,8 +579,8 @@ marcadas com **Admin** respondem `403` para Viewers.
 | `GET` | `/audit` | **Admin.** Registro de auditoria, mais recente primeiro. Query: `limit` (até 200), `before` (cursor), `action` |
 | `GET` | `/applications` | Lista aplicações com estado atual e disponibilidade em 24h |
 | `GET` | `/applications/{id}` | Detalhe de uma aplicação |
-| `POST` | `/applications` | **Admin.** Cadastra (`name`, `healthCheckUrl`, `checkIntervalSeconds?`) |
-| `PUT` | `/applications/{id}` | **Admin.** Atualiza campos (`name`, `healthCheckUrl`, `checkIntervalSeconds`, `isEnabled`) |
+| `POST` | `/applications` | **Admin.** Cadastra (`name`, `healthCheckUrl`, `checkIntervalSeconds?`, `isPublic?`) |
+| `PUT` | `/applications/{id}` | **Admin.** Atualiza campos (`name`, `healthCheckUrl`, `checkIntervalSeconds`, `isEnabled`, `isPublic`) |
 | `DELETE` | `/applications/{id}` | **Admin.** Remove a aplicação e o histórico |
 | `GET` | `/applications/{id}/checks` | Histórico paginado. Query: `limit` (1 a 500), `cursor`, `from`, `to`, `status` |
 | `GET` | `/applications/{id}/stats` | Disponibilidade, latência média, p95, máxima e erros por tipo. Query: `hours` (1 a 168) |
@@ -569,6 +593,7 @@ marcadas com **Admin** respondem `403` para Viewers.
 | `POST` | `/api-keys` | **Admin.** Cria (`name`). A resposta traz a chave completa, só desta vez |
 | `DELETE` | `/api-keys/{id}` | **Admin.** Revoga |
 | `GET` | `/events` | Canal ao vivo (Server-Sent Events): `ready`, `check`, `incident-opened`, `incident-resolved`, `deployment` e `ping`. `503` acima do limite de conexões |
+| `GET` | `/public/status` | Público. Página de status: situação geral e, para cada aplicação publicada, nome, situação e disponibilidade por dia. Cache de 30 s |
 | `GET` | `/health` | Público (fora de `/api`). Liveness da própria API |
 
 Exemplos:
@@ -636,7 +661,10 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Monitoring:DegradedLatencyThresholdMs` | `1000` | Acima disso, 2xx vira `Degraded` |
 | `Monitoring:ResultRetentionDays` | `30` | Retenção do histórico |
 | `Monitoring:SchedulerTickSeconds` | `5` | Frequência do agendador |
-| `RateLimiting:ReadRequestsPerMinute` / `WriteRequestsPerMinute` / `LoginRequestsPerMinute` | `120` / `20` / `5` | Limites por IP |
+| `RateLimiting:ReadRequestsPerMinute` / `WriteRequestsPerMinute` / `LoginRequestsPerMinute` / `PublicRequestsPerMinute` | `120` / `20` / `5` / `30` | Limites por IP |
+| `StatusPage:Title` | `Status dos serviços` | Título da página pública |
+| `StatusPage:HistoryDays` | `90` | Dias de histórico (limitado pela retenção) |
+| `StatusPage:CacheSeconds` | `30` | Cache da resposta pública (0 desliga) |
 | `Auth:JwtSigningKey` | (obrigatória, segredo) | Chave HMAC dos tokens, 32+ caracteres |
 | `Auth:TokenLifetimeMinutes` | `480` | Validade da sessão |
 | `Auth:CookieSecure` | `true` | Cookie só em HTTPS (navegadores tratam `localhost` como seguro) |
@@ -724,6 +752,7 @@ backend/
     Auth/             login, JWT, política de senha, usuários, chaves de API
     Deployments/      registro de deploys, validação e correlação com incidentes
     Live/             canal ao vivo: LISTEN/NOTIFY entre instâncias, pub/sub local e endpoint SSE
+    StatusPage/       página de status pública: rota anônima, DTO mínimo e cache
     Infrastructure/   rate limiting e cabeçalhos de segurança
     Program.cs        composição da aplicação (DI e pipeline HTTP)
   tests/DeployGuard.Tests/
@@ -735,6 +764,7 @@ frontend/
     users/            gestão de usuários e desbloqueio de contas (só Admin)
     account/          "Minha conta": troca de senha
     audit/            registro de auditoria (só Admin)
+    status/           página de status pública (sem login)
     api-keys/         chaves de API para o CI (só Admin)
     dashboard/        lista de aplicações e formulário de cadastro
     application-detail/  estatísticas, gráfico de latência e histórico
@@ -763,6 +793,8 @@ docker-compose.yml
   nginx cuida disso.
 - **Limpeza de resultados antigos** roda em todas as réplicas. É inofensivo (o `DELETE` é idempotente),
   mas trabalho repetido.
+- **Página de status com aviso manual**: hoje ela é 100% automática. Um próximo passo é o Admin
+  escrever avisos ("manutenção programada às 22h") e mostrar o histórico de incidentes encerrados.
 - **Mais canais de alerta** (e-mail, SMS) e regras por aplicação (quem avisar, horário de plantão).
 - **Particionamento** da tabela de resultados por data, se o volume crescer.
 - **Validação do corpo** da resposta (ex.: exigir `"status":"ok"`) com limite de bytes lidos.

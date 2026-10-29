@@ -16,6 +16,7 @@ import {
   Incident,
   IncidentStatusFilter,
   MonitoredApplication,
+  PublicStatus,
   UpdateApplicationRequest,
   User,
 } from './models';
@@ -86,6 +87,11 @@ export class DeployGuardApi {
     return this.http.get<Incident[]>(`${this.baseUrl}/${encodeURIComponent(id)}/incidents`, {
       params: new HttpParams().set('limit', limit),
     });
+  }
+
+  /** Rota pública: funciona sem login. */
+  getPublicStatus(): Observable<PublicStatus> {
+    return this.http.get<PublicStatus>('/api/public/status');
   }
 
   listUsers(): Observable<User[]> {

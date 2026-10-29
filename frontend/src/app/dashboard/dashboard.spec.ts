@@ -16,6 +16,7 @@ function app(overrides: Partial<MonitoredApplication>): MonitoredApplication {
     healthCheckUrl: 'https://app.example.com/health',
     checkIntervalSeconds: 60,
     isEnabled: true,
+    isPublic: false,
     createdAt: new Date().toISOString(),
     lastCheckedAt: new Date().toISOString(),
     lastStatus: 'Up',

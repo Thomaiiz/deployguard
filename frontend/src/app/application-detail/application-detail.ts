@@ -159,6 +159,20 @@ export class ApplicationDetail {
     });
   }
 
+  protected togglePublic(app: MonitoredApplication): void {
+    const message = app.isPublic
+      ? `Tirar "${app.name}" da página de status pública?`
+      : `Publicar "${app.name}" na página de status? Qualquer pessoa, sem login, verá o nome e a situação (a URL não aparece).`;
+    if (!confirm(message)) {
+      return;
+    }
+    this.api.updateApplication(app.id, { isPublic: !app.isPublic }).subscribe({
+      next: (updated) =>
+        this.app.set({ ...app, ...updated, availability24hPercent: app.availability24hPercent }),
+      error: (err) => this.error.set(errorMessage(err)),
+    });
+  }
+
   protected remove(app: MonitoredApplication): void {
     if (!confirm(`Remover "${app.name}" e todo o histórico?`)) {
       return;

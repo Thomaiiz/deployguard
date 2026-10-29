@@ -92,6 +92,7 @@ public static class ApplicationEndpoints
             Name = request.Name!.Trim(),
             HealthCheckUrl = request.HealthCheckUrl!.Trim(),
             CheckIntervalSeconds = interval,
+            IsPublic = request.IsPublic ?? false,
             CreatedAt = now,
             NextCheckAt = now, // a primeira verificação acontece no próximo ciclo do agendador
         };
@@ -134,6 +135,7 @@ public static class ApplicationEndpoints
         app.HealthCheckUrl = url.Trim();
         app.CheckIntervalSeconds = interval;
         app.IsEnabled = request.IsEnabled ?? app.IsEnabled;
+        app.IsPublic = request.IsPublic ?? app.IsPublic;
 
         if (urlChanged)
         {
@@ -146,7 +148,7 @@ public static class ApplicationEndpoints
         }
 
         var changes = string.Join(", ", db.Entry(app).Properties
-            .Where(p => p.IsModified && p.Metadata.Name is "Name" or "HealthCheckUrl" or "CheckIntervalSeconds" or "IsEnabled")
+            .Where(p => p.IsModified && p.Metadata.Name is "Name" or "HealthCheckUrl" or "CheckIntervalSeconds" or "IsEnabled" or "IsPublic")
             .Select(p => $"{p.Metadata.Name}: {p.OriginalValue} → {p.CurrentValue}"));
         if (changes.Length > 0)
         {

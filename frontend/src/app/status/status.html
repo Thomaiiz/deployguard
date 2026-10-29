@@ -1,0 +1,71 @@
+@if (status(); as s) {
+  <section class="status-page">
+    <h1>{{ s.title }}</h1>
+
+    <p class="status-banner status-banner--{{ s.overall.toLowerCase() }}" data-testid="overall">
+      {{ overall[s.overall] }}
+    </p>
+
+    @if (failed()) {
+      <p class="status-stale" role="status">
+        Não foi possível atualizar agora. Mostrando a última leitura.
+      </p>
+    }
+
+    @if (s.components.length === 0) {
+      <p class="card muted">Nenhum serviço foi publicado ainda.</p>
+    } @else {
+      <ul class="status-list card">
+        @for (c of s.components; track $index) {
+          <li class="status-item" data-testid="component">
+            <div class="status-item__head">
+              <strong>{{ c.name }}</strong>
+              <span [class]="badgeClass(c.status)">{{ labels[c.status] }}</span>
+            </div>
+            @if (c.incidentSince) {
+              <p class="status-item__incident">
+                Fora do ar desde {{ c.incidentSince | date: 'dd/MM HH:mm' }}. Já estamos
+                acompanhando.
+              </p>
+            }
+            <div class="bars" role="img" [attr.aria-label]="'Disponibilidade por dia de ' + c.name">
+              @for (day of c.days; track day.date) {
+                <span
+                  [class]="barClass(day)"
+                  [title]="
+                    (day.date | date: 'dd/MM/yyyy') +
+                    ': ' +
+                    (day.availabilityPercent !== null
+                      ? (day.availabilityPercent | number: '1.0-2') + '%'
+                      : 'sem dados')
+                  "
+                ></span>
+              }
+            </div>
+            <div class="bars__legend muted">
+              <span>Há {{ s.historyDays }} dias</span>
+              <span>
+                {{
+                  c.availabilityPercent !== null
+                    ? (c.availabilityPercent | number: '1.0-2') + '% disponível'
+                    : 'Sem dados'
+                }}
+              </span>
+              <span>Hoje</span>
+            </div>
+          </li>
+        }
+      </ul>
+    }
+
+    <p class="muted status-page__footer">
+      Atualizado às {{ s.generatedAt | date: 'HH:mm:ss' }}. A página se atualiza a cada minuto.
+    </p>
+  </section>
+} @else if (failed()) {
+  <p class="alert" role="alert">
+    Não foi possível carregar o status agora. Tente de novo em instantes.
+  </p>
+} @else {
+  <p class="muted">Carregando…</p>
+}

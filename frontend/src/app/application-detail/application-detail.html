@@ -13,12 +13,18 @@
       <p class="muted">
         {{ app.healthCheckUrl }} · a cada {{ app.checkIntervalSeconds }} s · última verificação
         {{ app.lastCheckedAt | relativeTime: now() }}
+        @if (app.isPublic) {
+          · <a routerLink="/status" data-testid="public-link">na página de status</a>
+        }
       </p>
     </div>
     @if (auth.isAdmin()) {
       <div class="actions">
         <button type="button" class="btn btn--ghost" (click)="toggleEnabled(app)">
           {{ app.isEnabled ? 'Pausar' : 'Retomar' }}
+        </button>
+        <button type="button" class="btn btn--ghost" (click)="togglePublic(app)">
+          {{ app.isPublic ? 'Tirar da página de status' : 'Publicar na página de status' }}
         </button>
         <button type="button" class="btn btn--danger" (click)="remove(app)">Remover</button>
       </div>

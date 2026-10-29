@@ -5,6 +5,7 @@
   <span class="topbar__tag">Monitoramento de aplicações</span>
   @if (auth.user(); as user) {
     <nav class="topbar__user">
+      <a routerLink="/status">Status</a>
       @if (auth.isAdmin()) {
         <a routerLink="/users">Usuários</a>
         <a routerLink="/keys">Chaves de API</a>
