@@ -9,6 +9,8 @@ Funcionalidades atuais:
   mostrar o estado de cada aplicação num dashboard.
 - **Etapa 2:** abrir e fechar **incidentes** automaticamente quando uma aplicação cai e volta, e
   **alertar** o time por webhook (Slack, Discord ou JSON genérico), com entrega confiável.
+- **Etapa 3:** **login** com e-mail e senha e dois papéis: **Admin** (cadastra aplicações e
+  usuários) e **Viewer** (só acompanha). Toda a API exige login.
 
 | Camada | Tecnologia |
 |---|---|
@@ -47,12 +49,17 @@ Para um guia de estudo com os conceitos e perguntas de entrevista, veja
 Pré-requisito: Docker com Compose v2.
 
 ```bash
-cp .env.example .env          # edite e troque POSTGRES_PASSWORD
+cp .env.example .env          # edite: POSTGRES_PASSWORD, AUTH_JWT_KEY, ADMIN_EMAIL, ADMIN_PASSWORD
 docker compose up --build
 ```
 
-Abra <http://localhost:8080>. Para ver o monitoramento funcionando sem depender da internet,
-cadastre a aplicação de demonstração que sobe junto:
+Para gerar a chave de assinatura dos tokens: `openssl rand -base64 48`. O `ADMIN_EMAIL` e o
+`ADMIN_PASSWORD` criam o primeiro administrador na primeira vez que a API sobe (senha com 12 ou
+mais caracteres, sem o seu e-mail). Depois disso, outros usuários são criados pela tela
+**Usuários** do dashboard.
+
+Abra <http://localhost:8080> e entre com o admin. Para ver o monitoramento funcionando sem
+depender da internet, cadastre a aplicação de demonstração que sobe junto:
 
 | Nome | URL | Resultado esperado |
 |---|---|---|
@@ -73,10 +80,13 @@ rede interna do Compose.
 Pré-requisitos: .NET SDK 10, Node.js 24 e um PostgreSQL rodando.
 
 ```bash
-# 1. Segredo da conexão fora do repositório (fica no perfil do seu usuário)
+# 1. Segredos fora do repositório (ficam no perfil do seu usuário)
 cd backend/src/DeployGuard.Api
 dotnet user-secrets set "ConnectionStrings:DeployGuard" \
   "Host=localhost;Database=deployguard;Username=deployguard;Password=<sua-senha>"
+dotnet user-secrets set "Auth:JwtSigningKey" "$(openssl rand -base64 48)"
+dotnet user-secrets set "Auth:BootstrapAdminEmail" "voce@exemplo.com"
+dotnet user-secrets set "Auth:BootstrapAdminPassword" "<uma senha com 12+ caracteres>"
 
 # 2. API em http://localhost:5080 (aplica as migrations ao iniciar em Development)
 dotnet run
@@ -316,7 +326,10 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
 - Nenhuma senha no repositório. A connection string vem de variável de ambiente
   (`ConnectionStrings__DeployGuard`) ou do `dotnet user-secrets` em desenvolvimento.
 - No Compose, a senha vem do `.env` (ignorado pelo git). `${POSTGRES_PASSWORD:?...}` faz o Compose
-  falhar se ela não estiver definida, então não existe senha padrão.
+  falhar se ela não estiver definida, então não existe senha padrão. O mesmo vale para a chave dos
+  tokens (`AUTH_JWT_KEY`) e para o admin inicial.
+- **A chave de assinatura dos tokens é o segredo mais sensível:** com ela, qualquer um forjaria um
+  token de Admin. A API não sobe com chave ausente ou menor que 32 caracteres.
 - A API não sobe sem connection string, e as opções de monitoramento são validadas na
   inicialização (`ValidateOnStart`).
 - Erros seguem Problem Details (RFC 9457) sem stack trace. Mensagens de falha de verificação são
@@ -325,7 +338,27 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
 - **URLs de webhook são segredos** (quem tem a URL de um webhook do Slack pode postar no canal).
   Vêm só de variável de ambiente, exigem `https` e nunca aparecem em logs nem em mensagens de erro.
 
-### 6. Outras defesas
+### 6. Autenticação e autorização
+
+- **Fechado por padrão.** Uma *fallback policy* exige login em todo endpoint. Só `/health`, o login
+  e o logout são públicos. Um endpoint novo esquecido nasce protegido, não aberto.
+- **Papéis (RBAC).** `Admin` cadastra, altera e remove aplicações e usuários. `Viewer` só lê. A
+  regra vale na API (`403`); o dashboard só esconde os botões para não confundir.
+- **Senhas com PBKDF2** (`PasswordHasher` do ASP.NET Core Identity): hash lento com *salt*
+  aleatório. A senha nunca é gravada nem devolvida pela API. Política: 12 a 128 caracteres e sem o
+  nome do e-mail (comprimento vale mais que regras de símbolo, como recomenda o NIST).
+- **Token JWT em cookie `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/api`.** O JavaScript não
+  lê o cookie (um XSS não rouba a sessão) e o navegador não o envia em requisições vindas de
+  outros sites (CSRF). Assinatura HMAC-SHA256 com algoritmo fixo, emissor, audiência e validade
+  conferidos.
+- **Revogação imediata.** A cada requisição a API confere se o usuário do token ainda existe e tem
+  o mesmo papel. Remover alguém corta o acesso na hora, sem esperar o token expirar.
+- **Contra força bruta e enumeração.** Login limitado a 5 tentativas por minuto por IP. A mensagem
+  de erro é a mesma para e-mail inexistente e senha errada, e o tempo de resposta também (a API
+  calcula um hash mesmo quando o e-mail não existe).
+- **Sem open redirect.** Depois do login, o dashboard só volta para caminhos internos.
+
+### 7. Outras defesas
 
 - Containers rodando como usuário não-root, imagem da API "chiseled" (sem shell), sistema de
   arquivos somente leitura e `no-new-privileges`.
@@ -336,40 +369,48 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
   teste que garante isso.
 - CI com `permissions: contents: read`, auditoria de pacotes vulneráveis (NuGet e npm) e Dependabot.
 
-> **Ainda não há autenticação.** Ela é o próximo item de segurança (veja os próximos passos).
-> Até lá, mantenha o dashboard acessível apenas na sua máquina ou numa rede confiável.
-
 ---
 
 ## API REST
 
 Base: `/api`. JSON com enums como texto. Erros no formato Problem Details. Em Development o
-documento OpenAPI fica em `/openapi/v1.json`.
+documento OpenAPI fica em `/openapi/v1.json`. Tudo exige login, exceto onde indicado; rotas
+marcadas com **Admin** respondem `403` para Viewers.
 
 | Método | Rota | Descrição |
 |---|---|---|
+| `POST` | `/auth/login` | Público. `{ email, password }`. Devolve o usuário e grava o cookie de sessão |
+| `POST` | `/auth/logout` | Público. Apaga o cookie |
+| `GET` | `/auth/me` | Usuário logado (`id`, `email`, `role`) |
+| `GET` | `/users` | **Admin.** Lista usuários (nunca devolve o hash da senha) |
+| `POST` | `/users` | **Admin.** Cria (`email`, `password`, `role`: `Admin` ou `Viewer`, padrão `Viewer`) |
+| `DELETE` | `/users/{id}` | **Admin.** Remove (não é possível remover a si mesmo) |
 | `GET` | `/applications` | Lista aplicações com estado atual e disponibilidade em 24h |
 | `GET` | `/applications/{id}` | Detalhe de uma aplicação |
-| `POST` | `/applications` | Cadastra (`name`, `healthCheckUrl`, `checkIntervalSeconds?`) |
-| `PUT` | `/applications/{id}` | Atualiza campos (`name`, `healthCheckUrl`, `checkIntervalSeconds`, `isEnabled`) |
-| `DELETE` | `/applications/{id}` | Remove a aplicação e o histórico |
+| `POST` | `/applications` | **Admin.** Cadastra (`name`, `healthCheckUrl`, `checkIntervalSeconds?`) |
+| `PUT` | `/applications/{id}` | **Admin.** Atualiza campos (`name`, `healthCheckUrl`, `checkIntervalSeconds`, `isEnabled`) |
+| `DELETE` | `/applications/{id}` | **Admin.** Remove a aplicação e o histórico |
 | `GET` | `/applications/{id}/checks` | Histórico paginado. Query: `limit` (1 a 500), `cursor`, `from`, `to`, `status` |
 | `GET` | `/applications/{id}/stats` | Disponibilidade, latência média, p95, máxima e erros por tipo. Query: `hours` (1 a 168) |
 | `GET` | `/incidents` | Incidentes de todas as aplicações. Query: `status` (`All`, `Open`, `Resolved`), `limit` (até 200) |
 | `GET` | `/applications/{id}/incidents` | Incidentes de uma aplicação |
-| `GET` | `/health` | Liveness da própria API |
+| `GET` | `/health` | Público (fora de `/api`). Liveness da própria API |
 
 Exemplos:
 
 ```bash
-curl -X POST http://localhost:8080/api/applications \
+# -c/-b guardam e reenviam o cookie de sessão, como um navegador
+curl -c cookies.txt -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' -d '{"email":"admin@example.com","password":"..."}'
+
+curl -b cookies.txt -X POST http://localhost:8080/api/applications \
   -H 'Content-Type: application/json' \
   -d '{"name":"Demo","healthCheckUrl":"http://demo-app:8080/health","checkIntervalSeconds":30}'
 
-curl "http://localhost:8080/api/applications/{id}/checks?limit=20"
+curl -b cookies.txt "http://localhost:8080/api/applications/{id}/checks?limit=20"
 # → { "items": [...], "nextCursor": "MTM4..." }   passe ?cursor=... para a próxima página
 
-curl "http://localhost:8080/api/applications/{id}/stats?hours=24"
+curl -b cookies.txt "http://localhost:8080/api/applications/{id}/stats?hours=24"
 ```
 
 Resposta de validação (`400`):
@@ -405,7 +446,12 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Monitoring:DegradedLatencyThresholdMs` | `1000` | Acima disso, 2xx vira `Degraded` |
 | `Monitoring:ResultRetentionDays` | `30` | Retenção do histórico |
 | `Monitoring:SchedulerTickSeconds` | `5` | Frequência do agendador |
-| `RateLimiting:ReadRequestsPerMinute` / `WriteRequestsPerMinute` | `120` / `20` | Limites por IP |
+| `RateLimiting:ReadRequestsPerMinute` / `WriteRequestsPerMinute` / `LoginRequestsPerMinute` | `120` / `20` / `5` | Limites por IP |
+| `Auth:JwtSigningKey` | (obrigatória, segredo) | Chave HMAC dos tokens, 32+ caracteres |
+| `Auth:TokenLifetimeMinutes` | `480` | Validade da sessão |
+| `Auth:CookieSecure` | `true` | Cookie só em HTTPS (navegadores tratam `localhost` como seguro) |
+| `Auth:BootstrapAdminEmail` / `BootstrapAdminPassword` | (vazio, segredo) | Primeiro admin, criado só se não houver nenhum usuário |
+| `Auth:Issuer` / `Audience` | `deployguard` / `deployguard-dashboard` | Conferidos em todo token |
 | `ReverseProxy:KnownNetworks` | `[]` | Redes (CIDR) cujo `X-Forwarded-For` é confiável |
 | `Alerting:FailureThreshold` | `2` | Falhas consecutivas para abrir um incidente |
 | `Alerting:Webhooks` | `[]` | Lista de `{ Name, Url, Format }`. `Format`: `Slack`, `Discord` ou `Generic`. URL vazia = canal desligado |
@@ -464,13 +510,16 @@ backend/
     History/          endpoints de histórico e estatísticas, cursor de paginação
     Incidents/        endpoints de incidentes
     Alerting/         máquina de estados do incidente, outbox dispatcher, envio por webhook
+    Auth/             login, emissão e validação do JWT, política de senha, usuários
     Infrastructure/   rate limiting e cabeçalhos de segurança
     Program.cs        composição da aplicação (DI e pipeline HTTP)
   tests/DeployGuard.Tests/
     Unit/  Integration/  TestDoubles/
 frontend/
   src/app/
-    core/             modelos, cliente da API, tratamento de Problem Details
+    core/             modelos, cliente da API, Problem Details, sessão (AuthService), guards, interceptor
+    login/            tela de login
+    users/            gestão de usuários (só Admin)
     dashboard/        lista de aplicações e formulário de cadastro
     application-detail/  estatísticas, gráfico de latência e histórico
     shared/           badge de status, pipe de tempo relativo
@@ -483,7 +532,9 @@ docker-compose.yml
 
 ## Limitações conhecidas e próximos passos
 
-- **Autenticação e autorização** (ex.: OIDC com JWT na API e login no dashboard).
+- **Login corporativo (SSO/OIDC)** com Entra ID, Google ou Keycloak, e MFA.
+- **Troca de senha** pelo próprio usuário e bloqueio de conta após muitas falhas (hoje só há o
+  rate limit por IP).
 - **Várias instâncias**: distribuir o agendamento (`FOR UPDATE SKIP LOCKED` ou worker separado).
 - **Mais canais de alerta** (e-mail, SMS) e regras por aplicação (quem avisar, horário de plantão).
 - **Tempo real** no dashboard com Server-Sent Events.

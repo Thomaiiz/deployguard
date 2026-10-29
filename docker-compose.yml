@@ -1,5 +1,5 @@
 # Sobe o DeployGuard completo: PostgreSQL + API + dashboard + uma aplicação de demonstração.
-# Uso: cp .env.example .env  (e troque a senha)  →  docker compose up --build
+# Uso: cp .env.example .env  (e troque as senhas e a chave)  →  docker compose up --build
 name: deployguard
 
 services:
@@ -45,6 +45,11 @@ services:
       Alerting__Webhooks__0__Name: principal
       Alerting__Webhooks__0__Url: ${ALERT_WEBHOOK_URL:-}
       Alerting__Webhooks__0__Format: ${ALERT_WEBHOOK_FORMAT:-Slack}
+      # Login: a chave que assina os tokens e a senha do primeiro admin são segredos do .env.
+      # O admin só é criado quando o banco ainda não tem nenhum usuário.
+      Auth__JwtSigningKey: ${AUTH_JWT_KEY:?defina AUTH_JWT_KEY no .env (openssl rand -base64 48)}
+      Auth__BootstrapAdminEmail: ${ADMIN_EMAIL:?defina ADMIN_EMAIL no .env}
+      Auth__BootstrapAdminPassword: ${ADMIN_PASSWORD:?defina ADMIN_PASSWORD no .env}
       # Só confia em X-Forwarded-For vindo da rede interna (onde está o nginx).
       ReverseProxy__KnownNetworks__0: 172.28.0.0/24
     networks: [backend, frontend]

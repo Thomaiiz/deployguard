@@ -299,6 +299,76 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
 - **`forkJoin` no Angular.** Dispara a busca de aplicações e de incidentes em paralelo e só atualiza
   a tela quando as duas respostas chegam.
 
+## Etapa 9 (terceira fase): login e autenticação
+
+### O que mudou
+
+- Tabela nova `users` (e-mail único, hash da senha, papel, último login).
+- Pasta `Auth/` no backend: login, logout, `/me`, gestão de usuários e emissão do token.
+- Toda a API passou a exigir login. Escritas em aplicações e a gestão de usuários exigem `Admin`.
+- No Angular: tela de login, guards nas rotas, interceptor para sessão expirada, botão Sair, tela
+  Usuários e botões de escrita escondidos para Viewers.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `dotnet add package Microsoft.AspNetCore.Authentication.JwtBearer` | Instala o middleware que lê e valida tokens JWT em cada requisição. |
+| `dotnet ef migrations add AddUsers` | Gera a migration da tabela `users`. |
+| `dotnet user-secrets set "Auth:JwtSigningKey" "..."` | Guarda a chave dos tokens no perfil do seu usuário, fora do repositório. |
+| `openssl rand -base64 48` | Gera 48 bytes aleatórios em Base64: uma chave forte para assinar os tokens. |
+| `curl -c cookies.txt` / `curl -b cookies.txt` | `-c` grava os cookies recebidos num arquivo e `-b` os reenvia. É o jeito de "logar" pelo terminal. |
+
+### Conceitos
+
+- **Autenticação x autorização.** Autenticação responde "quem é você?" (login). Autorização
+  responde "você pode fazer isso?" (papel). Sem login a API responde `401 Unauthorized`; logado mas
+  sem permissão, `403 Forbidden`.
+- **Hash de senha (PBKDF2).** Nunca se guarda a senha, nem criptografada (criptografia se desfaz
+  com a chave). Guarda-se um hash: uma função de mão única. O *salt* (bytes aleatórios por usuário)
+  faz duas senhas iguais virarem hashes diferentes e inutiliza tabelas prontas (*rainbow tables*).
+  PBKDF2 repete o hash centenas de milhares de vezes de propósito: para o usuário são milissegundos,
+  para quem roubou o banco e quer testar bilhões de senhas, é lento demais. `SuccessRehashNeeded`
+  atualiza o hash quando o padrão de iterações fica mais forte.
+- **JWT (JSON Web Token).** Três partes em Base64 separadas por ponto: cabeçalho (algoritmo),
+  *payload* (claims: `sub` = id do usuário, `email`, `role`, `exp` = expiração) e assinatura. Qualquer
+  um consegue *ler* o payload; o que ninguém consegue sem a chave é *alterar* sem invalidar a
+  assinatura. Por isso nunca se coloca segredo dentro do JWT.
+- **Por que fixar o algoritmo (`ValidAlgorithms`).** Um ataque clássico manda um token com
+  `"alg": "none"` (sem assinatura). Aceitando só HMAC-SHA256, esse token é recusado. Há um teste
+  que tenta exatamente isso.
+- **Stateless e o problema da revogação.** O servidor não guarda sessão: valida a assinatura e
+  pronto. A desvantagem é que um token roubado ou de alguém demitido valeria até expirar. Resolvi
+  com uma consulta barata por chave primária a cada requisição (`OnTokenValidated`): se o usuário
+  sumiu ou mudou de papel, o token é recusado na hora. É um meio-termo entre JWT puro e sessão no
+  servidor.
+- **Cookie `HttpOnly` em vez de `localStorage`.** Token no `localStorage` pode ser lido por qualquer
+  script da página, então um único XSS rouba a sessão. Com `HttpOnly`, o JavaScript não enxerga o
+  cookie e o navegador o envia sozinho. `Secure` = só em HTTPS. `SameSite=Strict` = o navegador não
+  envia o cookie quando a requisição nasce em outro site, o que bloqueia CSRF. `Path=/api` = o cookie
+  só vai para a API.
+- **Fallback policy (fechado por padrão).** Em vez de lembrar de proteger cada endpoint, todos
+  exigem login e os públicos dizem `AllowAnonymous()`. Esquecer algo deixa o sistema mais fechado,
+  nunca mais aberto.
+- **RBAC (controle por papel).** Dois papéis bastam aqui: `Admin` e `Viewer`. Novos usuários nascem
+  `Viewer` (menor privilégio). O frontend esconde botões, mas quem garante é a API: o cliente nunca
+  é confiável.
+- **Enumeração de usuários.** Se o login dissesse "e-mail não encontrado", um atacante descobriria
+  quem tem conta. A mensagem é genérica, e a API calcula um hash mesmo quando o e-mail não existe
+  para que o *tempo* de resposta também não denuncie.
+- **Força bruta.** Rate limit de 5 tentativas por minuto por IP só no login, bem mais restrito que o
+  resto da API.
+- **Admin inicial (bootstrap).** Alguém precisa existir para criar os outros. Na primeira subida,
+  com o banco vazio, a API cria o admin a partir de variáveis de ambiente. Depois disso elas são
+  ignoradas.
+- **Guards e interceptors no Angular.** *Guard* é uma função que o router chama antes de abrir uma
+  rota: devolve `true` ou um redirecionamento (para `/login?returnUrl=...`). *Interceptor* é um
+  "filtro" por onde passa toda requisição HTTP: se a API responder `401` (sessão expirou), ele limpa
+  o estado e manda para o login. Detalhe que um teste pegou: `inject()` só funciona antes do
+  primeiro `await` dentro de um guard.
+- **Open redirect.** O `returnUrl` vem da URL, então um link malicioso poderia mandar o usuário para
+  outro site depois do login. `safeReturnUrl` só aceita caminhos que começam com uma única `/`.
+
 ---
 
 ## Perguntas de entrevista
@@ -369,3 +439,20 @@ considero "lento" (Degraded) como queda.
 Além da lógica no código, um índice único parcial no PostgreSQL. Se algo der errado, o banco recusa a
 gravação.
 
+**Onde você guarda o token de login no frontend e por quê?**
+Num cookie `HttpOnly`, `Secure`, `SameSite=Strict`. O JavaScript não consegue lê-lo, então um XSS
+não rouba a sessão, e o `SameSite` impede que outro site use o cookie (CSRF). O frontend descobre
+quem está logado chamando `/api/auth/me`.
+
+**JWT não pode ser revogado. Como você lida com isso?**
+A cada requisição confiro, por chave primária, se o usuário do token ainda existe e tem o mesmo
+papel. Remover alguém corta o acesso na hora. Em escala maior, daria para trocar por um cache ou
+por uma lista de tokens revogados com o `jti`.
+
+**Como as senhas são guardadas?**
+Hash PBKDF2 com salt aleatório, pelo `PasswordHasher` do ASP.NET Core Identity. A senha nunca é
+gravada nem devolvida. A política exige comprimento (12+) em vez de símbolos obrigatórios.
+
+**Qual a diferença entre 401 e 403?**
+`401`: não sei quem você é (sem login ou token inválido). `403`: sei quem você é, mas você não tem
+permissão (um Viewer tentando cadastrar uma aplicação).
