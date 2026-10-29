@@ -1,7 +1,13 @@
 <section class="page-header">
   <div>
     <h1>Aplicações</h1>
-    <p class="muted">Atualização automática a cada 15 segundos.</p>
+    <p class="live" [class.live--on]="live.status() === 'live'" data-testid="live-status">
+      @if (live.status() === 'live') {
+        <span class="live__dot" aria-hidden="true"></span>Ao vivo
+      } @else {
+        Reconectando… enquanto isso, atualiza a cada minuto.
+      }
+    </p>
   </div>
   <div class="actions">
     <button type="button" class="btn btn--ghost" (click)="refresh()">Atualizar</button>

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using DeployGuard.Api.Alerting;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Domain;
+using DeployGuard.Api.Live;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -18,6 +19,7 @@ public sealed class HealthCheckScheduler(
     IncidentTracker incidentTracker,
     IOptionsMonitor<MonitoringOptions> options,
     IOptionsMonitor<AlertingOptions> alertingOptions,
+    LiveEventHub liveEvents,
     TimeProvider time,
     ILogger<HealthCheckScheduler> logger) : BackgroundService
 {
@@ -91,6 +93,7 @@ public sealed class HealthCheckScheduler(
 
         // De volta a uma única thread: atualiza estado atual, histórico, incidentes e a
         // caixa de saída de alertas numa só transação (tudo ou nada).
+        var events = new List<LiveEvent>(dueApps.Count);
         foreach (var app in dueApps)
         {
             var (outcome, checkedAt) = outcomes[app.Id];
@@ -114,6 +117,7 @@ public sealed class HealthCheckScheduler(
 
             var (failures, transition) = incidentTracker.Evaluate(app.ConsecutiveFailures, openIncident is not null, outcome);
             app.ConsecutiveFailures = failures;
+            events.Add(new LiveEvent(LiveEventType.CheckCompleted, app.Id, checkedAt, outcome.Status, outcome.LatencyMs));
 
             switch (transition)
             {
@@ -128,18 +132,24 @@ public sealed class HealthCheckScheduler(
                     };
                     db.Incidents.Add(incident);
                     Enqueue(incident, AlertEventType.IncidentOpened, channels, checkedAt);
+                    events.Add(new LiveEvent(LiveEventType.IncidentOpened, app.Id, checkedAt, outcome.Status));
                     logger.LogWarning("Incidente aberto para {Application} ({Cause}).", app.Name, outcome.ErrorType);
                     break;
 
                 case IncidentTransition.Resolve:
                     openIncident!.ResolvedAt = checkedAt;
                     Enqueue(openIncident, AlertEventType.IncidentResolved, channels, checkedAt);
+                    events.Add(new LiveEvent(LiveEventType.IncidentResolved, app.Id, checkedAt, outcome.Status));
                     logger.LogInformation("Incidente {Id} resolvido para {Application}.", openIncident.Id, app.Name);
                     break;
             }
         }
 
         await db.SaveChangesAsync(ct);
+
+        // Avisa o dashboard só DEPOIS de gravar: quem receber o aviso e consultar a API
+        // já encontra os dados novos.
+        events.ForEach(liveEvents.Publish);
         logger.LogDebug("{Count} health checks executados.", dueApps.Count);
         return dueApps.Count;
     }

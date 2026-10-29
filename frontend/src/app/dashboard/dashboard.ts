@@ -1,16 +1,21 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { EMPTY, Subject, catchError, forkJoin, merge, switchMap, timer } from 'rxjs';
+import { EMPTY, Subject, auditTime, catchError, forkJoin, merge, switchMap, timer } from 'rxjs';
 import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
+import { LiveEventsService } from '../core/live-events';
 import { Incident, MonitoredApplication } from '../core/models';
 import { errorMessage } from '../core/problem-details';
 import { RelativeTimePipe } from '../shared/relative-time.pipe';
 import { StatusBadge } from '../shared/status-badge';
 import { RegisterApplicationForm } from './register-application-form';
 
-export const DASHBOARD_REFRESH_MS = 15_000;
+/** Atualização de segurança. O normal é o canal ao vivo avisar quando algo muda. */
+export const DASHBOARD_REFRESH_MS = 60_000;
+
+/** Junta avisos que chegam em rajada (uma rodada de verificações) numa só busca. */
+export const LIVE_BATCH_MS = 500;
 
 @Component({
   selector: 'dg-dashboard',
@@ -22,6 +27,7 @@ export class Dashboard {
   private readonly api = inject(DeployGuardApi);
   private readonly refresh$ = new Subject<void>();
   protected readonly auth = inject(AuthService);
+  protected readonly live = inject(LiveEventsService);
 
   // Signals: valores reativos. Quando mudam, o Angular atualiza só o que depende deles.
   protected readonly applications = signal<MonitoredApplication[]>([]);
@@ -45,10 +51,15 @@ export class Dashboard {
   });
 
   constructor() {
-    // Polling: a cada 15s (ou quando pedirmos refresh) busca o estado atual.
-    // switchMap cancela a requisição anterior se ela ainda estiver pendente,
+    // Busca o estado atual quando: abre a tela, chega um aviso ao vivo, o usuário pede, ou a
+    // cada minuto (rede de segurança se o canal ao vivo estiver fora). auditTime junta vários
+    // avisos seguidos numa busca só. switchMap cancela a requisição anterior se ela ainda estiver pendente,
     // evitando respostas fora de ordem. takeUntilDestroyed encerra ao sair da tela.
-    merge(timer(0, DASHBOARD_REFRESH_MS), this.refresh$)
+    merge(
+      timer(0, DASHBOARD_REFRESH_MS),
+      this.refresh$,
+      this.live.messages$.pipe(auditTime(LIVE_BATCH_MS)),
+    )
       .pipe(
         switchMap(() =>
           // forkJoin: dispara as duas requisições em paralelo e emite quando ambas terminam.

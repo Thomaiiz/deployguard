@@ -155,3 +155,23 @@ export interface CreateUserRequest {
   password: string;
   role: UserRole;
 }
+
+/** Nome do evento no canal ao vivo (linha "event:" do Server-Sent Events). */
+export type LiveEventName =
+  'ready' | 'check' | 'incident-opened' | 'incident-resolved' | 'deployment';
+
+/** Aviso curto de que algo mudou. Os dados completos continuam vindo da API. */
+export interface LiveEvent {
+  type: 'CheckCompleted' | 'IncidentOpened' | 'IncidentResolved' | 'DeploymentRegistered';
+  applicationId: string;
+  at: string;
+  status: CheckStatus | null;
+  latencyMs: number | null;
+  version: string | null;
+}
+
+export interface LiveMessage {
+  name: LiveEventName;
+  /** null no "ready", que só avisa que a conexão abriu. */
+  event: LiveEvent | null;
+}

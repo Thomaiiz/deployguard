@@ -2,9 +2,20 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, effect, inject, input, signal } from '@angular/core';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { Router, RouterLink } from '@angular/router';
-import { EMPTY, catchError, combineLatest, switchMap, timer } from 'rxjs';
+import {
+  EMPTY,
+  auditTime,
+  catchError,
+  combineLatest,
+  filter,
+  merge,
+  switchMap,
+  tap,
+  timer,
+} from 'rxjs';
 import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
+import { LiveEventsService } from '../core/live-events';
 import {
   ApplicationStats,
   Deployment,
@@ -20,8 +31,10 @@ import { StatusBadge } from '../shared/status-badge';
 import { LatencyChart } from './latency-chart';
 import { RegisterDeploymentForm } from './register-deployment-form';
 
-const REFRESH_MS = 15_000;
+/** Atualização de segurança; o normal é o canal ao vivo avisar. */
+const REFRESH_MS = 60_000;
 const PAGE_SIZE = 50;
+const LIVE_BATCH_MS = 500;
 
 @Component({
   selector: 'dg-application-detail',
@@ -41,6 +54,7 @@ const PAGE_SIZE = 50;
 export class ApplicationDetail {
   private readonly api = inject(DeployGuardApi);
   private readonly router = inject(Router);
+  private readonly live = inject(LiveEventsService);
   protected readonly auth = inject(AuthService);
 
   /** Preenchido pelo router a partir de /applications/:id (withComponentInputBinding). */
@@ -58,11 +72,24 @@ export class ApplicationDetail {
   protected readonly errorLabels = ERROR_LABELS;
 
   constructor() {
-    // Estado e estatísticas atualizam sozinhos; o histórico recarrega sob demanda.
+    // Estado e estatísticas atualizam ao abrir, a cada aviso ao vivo desta aplicação e,
+    // por segurança, a cada minuto. O histórico também recarrega com uma verificação nova,
+    // mas só se o usuário estiver na primeira página (não apaga o que ele carregou a mais).
     toObservable(this.id)
       .pipe(
         switchMap((id) =>
-          timer(0, REFRESH_MS).pipe(
+          merge(
+            timer(0, REFRESH_MS),
+            this.live.messages$.pipe(
+              filter((m) => m.name === 'ready' || m.event?.applicationId === id),
+              tap((m) => {
+                if (m.name === 'check' && this.checks().length <= PAGE_SIZE) {
+                  this.reloadHistory(id);
+                }
+              }),
+              auditTime(LIVE_BATCH_MS),
+            ),
+          ).pipe(
             switchMap(() =>
               combineLatest([
                 this.api.getApplication(id),

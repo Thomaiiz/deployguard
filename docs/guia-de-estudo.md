@@ -429,6 +429,83 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
   correção foi trocar a rota para `/keys` e o proxy para `/api/` (com barra). Teste unitário não
   pega esse tipo de erro de integração.
 
+## Etapa 11 (quinta fase): painel em tempo real
+
+### O que mudou
+
+- Endpoint novo `GET /api/events`, que fica aberto e manda avisos no formato **Server-Sent
+  Events**: `check` (verificação terminou), `incident-opened`, `incident-resolved`, `deployment`,
+  além de `ready` (conectou) e `ping` (sinal de vida).
+- Pasta `Live/` no backend: `LiveEventHub` (central de avisos em memória), `LiveEvent` (o aviso),
+  `LiveOptions` (limites) e `LiveEndpoints` (o endpoint SSE).
+- O agendador e o registro de deploy publicam avisos **depois** de gravar no banco.
+- No Angular: `LiveEventsService` (`core/live-events.ts`) e o indicador "● Ao vivo" no dashboard.
+  O dashboard e o detalhe recarregam quando chega um aviso; o polling caiu de 15 s para 60 s e
+  virou só rede de segurança.
+- nginx: um `location = /api/events` com `proxy_buffering off`.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `curl -N -b cookies.txt http://localhost:8080/api/events` | Abre o canal ao vivo no terminal. `-N` desliga o buffer do curl, para cada evento aparecer na hora em que chega. `-b` manda o cookie de login. `Ctrl+C` fecha. |
+| `TypedResults.ServerSentEvents(...)` | (C#) Novo no .NET 10. Recebe um `IAsyncEnumerable` e escreve cada item no formato SSE (`event:`, `data:`, linha em branco). |
+
+### Conceitos
+
+- **Polling x push.** Antes, o navegador perguntava a cada 15 s "mudou algo?" (polling). Quase
+  sempre a resposta era "não", e quando mudava, a tela demorava até 15 s. Agora o servidor
+  **avisa** quando muda (push). A tela atualiza em menos de 1 s e faz menos requisições à toa.
+- **SSE x WebSocket.** Os dois mantêm uma conexão aberta. WebSocket é nos dois sentidos e é outro
+  protocolo. SSE é uma resposta HTTP normal que não termina, só do servidor para o navegador. Para
+  um painel que só recebe, SSE basta e é mais simples: usa o mesmo cookie, passa pelo mesmo proxy e
+  o navegador (`EventSource`) reconecta sozinho.
+- **O formato na rede** é texto puro:
+
+  ```
+  event: check
+  data: {"type":"CheckCompleted","applicationId":"...","status":"Down"}
+
+  ```
+
+  A linha em branco separa uma mensagem da outra. `retry: 3000` diz ao navegador para esperar 3 s
+  antes de reconectar.
+- **Aviso, não dado.** O evento diz só "a aplicação X mudou". A tela busca os dados completos na
+  API, como antes. Assim existe uma fonte de verdade só (o banco). Se um aviso se perder, nada
+  fica errado para sempre: o próximo aviso ou a atualização de 1 minuto corrige.
+- **Publish/subscribe e `Channel`.** O `LiveEventHub` guarda uma fila (`Channel<T>`) por conexão.
+  Publicar = colocar o aviso em todas as filas. Cada conexão lê a sua no próprio ritmo. A fila é
+  **limitada** (100) e, cheia, descarta o mais antigo (`DropOldest`): um cliente com rede ruim não
+  faz a memória do servidor crescer sem fim, e quem publica (o agendador) nunca fica esperando.
+- **`IAsyncEnumerable` e `yield return`.** O endpoint é um método que "vai devolvendo" itens aos
+  poucos, com `await` no meio. O ASP.NET Core escreve cada item na resposta assim que ele sai. Quando
+  o navegador fecha a aba, o `CancellationToken` é cancelado, o loop termina e o `using` libera a vaga.
+- **Heartbeat (`ping`).** Proxies e balanceadores fecham conexões paradas (o nginx, por padrão, em
+  60 s sem dados). O `ping` a cada 15 s mantém a conexão viva e ajuda o navegador a perceber se ela
+  caiu.
+- **Duração máxima e reautenticação.** O login é conferido quando a conexão abre. Se a conexão
+  durasse para sempre, um usuário removido continuaria recebendo avisos. Por isso o servidor fecha
+  a cada 5 minutos; o navegador reconecta e passa pelo login de novo.
+- **Limite de conexões e degradação elegante.** Cada conexão aberta ocupa memória e um socket. Acima
+  de 100, a API responde `503`, e a tela mostra "Reconectando…" e continua com a atualização de
+  1 minuto. O sistema fica mais lento, mas não quebra.
+- **`Interlocked`.** Duas conexões chegando ao mesmo tempo poderiam passar as duas do limite se o
+  código fizesse "lê o contador, compara, soma". `Interlocked.Increment` faz a soma de forma
+  **atômica**: só uma thread de cada vez.
+- **Buffering no nginx.** Por padrão o nginx junta a resposta do backend antes de repassar. Para
+  uma página isso é bom; para SSE, os eventos ficariam presos. `proxy_buffering off` repassa cada
+  pedaço na hora.
+- **`auditTime` e `share` (RxJS).** Uma rodada do agendador manda vários avisos seguidos. O
+  `auditTime(500)` espera meio segundo e dispara uma busca só. O `share` faz o dashboard e o detalhe
+  usarem a **mesma** conexão, em vez de abrir uma por tela.
+- **Testar o tempo sem esperar.** O `FakeTimeProvider` é um relógio falso: o teste chama
+  `Advance(15 s)` e o `ping` sai na hora, sem o teste dormir 15 segundos. Por isso o endpoint recebe
+  o `TimeProvider` em vez de usar `DateTime.Now`.
+- **Limitação: uma instância só.** A central de avisos vive na memória do processo. Com duas
+  instâncias da API atrás de um balanceador, um navegador conectado na instância A não veria os
+  avisos da B. A solução seria um barramento compartilhado, como o `LISTEN/NOTIFY` do PostgreSQL ou
+  Redis pub/sub.
+
 ---
 
 ## Perguntas de entrevista
@@ -529,3 +606,15 @@ rápido é suficiente; senha de pessoa é que precisa de hash lento.
 **Como o sistema sabe que um deploy causou o incidente?**
 Ele não sabe, e isso é proposital. Ele mostra o deploy mais recente até 30 minutos antes do
 incidente como **suspeito**. É uma pista que encurta a investigação, não uma conclusão.
+
+**Como o dashboard fica em tempo real? Por que SSE e não WebSocket?**
+Com Server-Sent Events: o navegador abre `GET /api/events` e a resposta não termina; o servidor
+escreve um aviso a cada mudança. Escolhi SSE porque o painel só recebe dados. É HTTP puro, usa o
+mesmo cookie de login, passa pelo nginx e reconecta sozinho. O aviso só diz "a aplicação X mudou",
+e a tela busca os dados na API, então perder um aviso não deixa a tela errada.
+
+**E se um cliente for lento ou abrirem mil abas?**
+Cada conexão tem uma fila limitada que descarta os avisos mais antigos, então um cliente lento não
+consome memória sem fim. Há um limite de conexões: acima dele a API responde 503 e o dashboard
+continua funcionando com atualização a cada minuto.
+

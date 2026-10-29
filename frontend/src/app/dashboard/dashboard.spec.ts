@@ -1,11 +1,12 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { of, throwError } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
-import { Incident, MonitoredApplication } from '../core/models';
+import { LiveEventsService, LiveStatus } from '../core/live-events';
+import { Incident, LiveMessage, MonitoredApplication } from '../core/models';
 import { Dashboard } from './dashboard';
 
 function app(overrides: Partial<MonitoredApplication>): MonitoredApplication {
@@ -25,6 +26,9 @@ function app(overrides: Partial<MonitoredApplication>): MonitoredApplication {
   };
 }
 
+const liveMessages = new Subject<LiveMessage>();
+const liveStatus = signal<LiveStatus>('connecting');
+
 async function setup(api: Partial<DeployGuardApi>, isAdmin = true) {
   TestBed.configureTestingModule({
     imports: [Dashboard],
@@ -32,14 +36,17 @@ async function setup(api: Partial<DeployGuardApi>, isAdmin = true) {
       provideRouter([]),
       { provide: DeployGuardApi, useValue: { listIncidents: () => of([]), ...api } },
       { provide: AuthService, useValue: { isAdmin: signal(isAdmin) } },
+      { provide: LiveEventsService, useValue: { messages$: liveMessages, status: liveStatus } },
     ],
   });
   const fixture = TestBed.createComponent(Dashboard);
-  // O polling começa com timer(0): espera um ciclo do event loop e a renderização.
+  // A primeira busca começa com timer(0): espera um ciclo do event loop e a renderização.
   await new Promise((resolve) => setTimeout(resolve));
   await fixture.whenStable();
   return fixture.nativeElement as HTMLElement;
 }
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('Dashboard', () => {
   it('renders one card per application and the status summary', async () => {
@@ -163,6 +170,42 @@ describe('Dashboard', () => {
 
     expect(element.querySelector('[data-testid=incident-banner]')?.textContent).toContain(
       '3 min após o deploy v2.3.0',
+    );
+  });
+
+  it('reloads once per burst of live events and shows the live indicator', async () => {
+    let calls = 0;
+    liveStatus.set('live');
+    const element = await setup({
+      listApplications: () => {
+        calls++;
+        return of([app({})]);
+      },
+    });
+    expect(calls).toBe(1);
+    expect(element.querySelector('[data-testid=live-status]')?.textContent).toContain('Ao vivo');
+
+    // Uma rodada do agendador manda vários avisos seguidos: vira uma busca só.
+    const event = {
+      type: 'CheckCompleted' as const,
+      applicationId: 'a',
+      at: new Date().toISOString(),
+      status: 'Down' as const,
+      latencyMs: 30,
+      version: null,
+    };
+    liveMessages.next({ name: 'check', event });
+    liveMessages.next({ name: 'check', event });
+    liveMessages.next({ name: 'incident-opened', event });
+    await wait(600);
+    expect(calls).toBe(2);
+  });
+
+  it('tells the user when the live channel is down', async () => {
+    liveStatus.set('offline');
+    const element = await setup({ listApplications: () => of([]) });
+    expect(element.querySelector('[data-testid=live-status]')?.textContent).toContain(
+      'Reconectando',
     );
   });
 });
