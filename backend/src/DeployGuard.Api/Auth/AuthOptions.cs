@@ -31,4 +31,15 @@ public sealed class AuthOptions
     public string? BootstrapAdminEmail { get; set; }
 
     public string? BootstrapAdminPassword { get; set; }
+
+    /// <summary>Tentativas erradas seguidas antes de bloquear a conta.</summary>
+    [Range(3, 20)]
+    public int MaxFailedLogins { get; set; } = 5;
+
+    /// <summary>
+    /// Duração do bloqueio. Temporário de propósito: um bloqueio permanente deixaria qualquer
+    /// pessoa trancar a conta de outra só errando a senha de propósito.
+    /// </summary>
+    [Range(1, 1440)]
+    public int LockoutMinutes { get; set; } = 15;
 }

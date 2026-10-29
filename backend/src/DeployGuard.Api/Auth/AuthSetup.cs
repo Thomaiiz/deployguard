@@ -17,6 +17,7 @@ public static class AuthSetup
     public const string RoleClaim = "role";
     public const string EmailClaim = "email";
     public const string SubjectClaim = "sub";
+    public const string SecurityStampClaim = "stamp";
 
     public static IServiceCollection AddDeployGuardAuth(this IServiceCollection services, IConfiguration configuration)
     {
@@ -70,8 +71,8 @@ public static class AuthSetup
                     },
 
                     // JWT sozinho não pode ser revogado. Uma consulta barata (busca por chave primária)
-                    // garante que um usuário removido ou rebaixado perde o acesso na hora,
-                    // em vez de esperar o token expirar.
+                    // garante que um usuário removido, rebaixado ou que trocou a senha perde o
+                    // acesso na hora, em vez de esperar o token expirar.
                     OnTokenValidated = async context =>
                     {
                         var principal = context.Principal!;
@@ -82,14 +83,16 @@ public static class AuthSetup
                         }
 
                         var db = context.HttpContext.RequestServices.GetRequiredService<DeployGuardDbContext>();
-                        var role = await db.Users.AsNoTracking()
+                        var current = await db.Users.AsNoTracking()
                             .Where(u => u.Id == userId)
-                            .Select(u => (UserRole?)u.Role)
+                            .Select(u => new { u.Role, u.SecurityStamp })
                             .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
 
-                        if (role?.ToString() != principal.FindFirst(RoleClaim)?.Value)
+                        if (current is null
+                            || current.Role.ToString() != principal.FindFirst(RoleClaim)?.Value
+                            || current.SecurityStamp.ToString() != principal.FindFirst(SecurityStampClaim)?.Value)
                         {
-                            context.Fail("Usuário removido ou com papel alterado.");
+                            context.Fail("Usuário removido, com papel alterado ou que trocou a senha.");
                         }
                     },
                 };

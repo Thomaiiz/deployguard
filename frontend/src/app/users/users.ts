@@ -65,6 +65,16 @@ export class Users {
     });
   }
 
+  protected unlock(user: User): void {
+    this.api.unlockUser(user.id).subscribe({
+      next: () =>
+        this.users.update((list) =>
+          list.map((u) => (u.id === user.id ? { ...u, lockedUntil: null } : u)),
+        ),
+      error: (err) => this.error.set(errorMessage(err)),
+    });
+  }
+
   protected remove(user: User): void {
     if (!confirm(`Remover o acesso de ${user.email}?`)) {
       return;

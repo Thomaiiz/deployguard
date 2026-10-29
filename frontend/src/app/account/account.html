@@ -1,0 +1,54 @@
+<section class="page-header">
+  <div>
+    <h1>Minha conta</h1>
+    <p class="muted">{{ auth.user()?.email }} · {{ auth.user()?.role }}</p>
+  </div>
+</section>
+
+<form class="card form" [formGroup]="form" (ngSubmit)="submit()" novalidate>
+  <h2>Trocar senha</h2>
+  <p class="muted">
+    Ao trocar a senha, as sessões abertas em outros navegadores são encerradas. Esta continua.
+  </p>
+
+  <label>
+    Senha atual
+    <input type="password" formControlName="currentPassword" autocomplete="current-password" />
+    @if (showError('currentPassword')) {
+      <span class="field-error">Informe a senha atual.</span>
+    }
+    @for (message of serverErrors()['currentPassword'] ?? []; track message) {
+      <span class="field-error">{{ message }}</span>
+    }
+  </label>
+
+  <label>
+    Nova senha
+    <input type="password" formControlName="newPassword" autocomplete="new-password" />
+    @if (showError('newPassword')) {
+      <span class="field-error">Use pelo menos 12 caracteres.</span>
+    }
+    @for (message of serverErrors()['newPassword'] ?? []; track message) {
+      <span class="field-error">{{ message }}</span>
+    }
+  </label>
+
+  <label>
+    Repita a nova senha
+    <input type="password" formControlName="confirmPassword" autocomplete="new-password" />
+    @if (showMismatch()) {
+      <span class="field-error">As duas senhas novas não são iguais.</span>
+    }
+  </label>
+
+  @if (error(); as message) {
+    <p class="alert" role="alert">{{ message }}</p>
+  }
+  @if (saved()) {
+    <p class="notice" role="status" data-testid="password-saved">Senha alterada.</p>
+  }
+
+  <button type="submit" class="btn" [disabled]="submitting()">
+    {{ submitting() ? 'Salvando…' : 'Trocar senha' }}
+  </button>
+</form>

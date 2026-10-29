@@ -19,6 +19,8 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
 
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
 
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(user =>
@@ -29,6 +31,19 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
             user.Property(u => u.PasswordHash).HasMaxLength(512).IsRequired();
             user.Property(u => u.Role).HasConversion<string>().HasMaxLength(16);
             user.HasIndex(u => u.Email).IsUnique();
+        });
+
+        modelBuilder.Entity<AuditEvent>(audit =>
+        {
+            audit.ToTable("audit_events");
+            audit.HasKey(a => a.Id);
+            audit.Property(a => a.Action).HasConversion<string>().HasMaxLength(32);
+            audit.Property(a => a.ActorEmail).HasMaxLength(254).IsRequired();
+            audit.Property(a => a.TargetType).HasMaxLength(32);
+            audit.Property(a => a.TargetId).HasMaxLength(64);
+            audit.Property(a => a.Details).HasMaxLength(500);
+            audit.Property(a => a.IpAddress).HasMaxLength(45); // tamanho máximo de um IPv6 em texto
+            audit.HasIndex(a => a.At);
         });
 
         modelBuilder.Entity<Deployment>(deployment =>

@@ -570,6 +570,55 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
   cada réplica, então com 2 réplicas o teto dobra. Um limite global precisaria de um contador
   compartilhado, como o Redis.
 
+## Etapa 13 (sétima fase): conta e segurança do login
+
+### O que mudou
+
+- `users` ganhou `FailedLoginCount`, `LockoutEnd` e `SecurityStamp`. Tabela nova `audit_events`.
+- `POST /api/auth/password` (troca de senha), `POST /api/users/{id}/unlock` e `GET /api/audit`.
+- O token passou a levar o claim `stamp`, conferido a cada requisição junto com o papel.
+- No Angular: tela **Minha conta** (clicando no seu e-mail no topo), situação "Bloqueado até" com
+  botão **Desbloquear** em Usuários, e a tela **Auditoria**.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `dotnet ef migrations add AddAccountSecurityAndAudit` | Gera a migration com as colunas novas de `users` e a tabela `audit_events`. |
+| `defaultValueSql: "gen_random_uuid()"` | (na migration) Usuários que já existiam ganham um carimbo aleatório cada um, em vez de todos com zeros. |
+| `curl -b cookies.txt "http://localhost:8080/api/audit?action=LoginFailed"` | Lista só os logins recusados: o primeiro lugar para olhar quando se suspeita de ataque. |
+
+### Conceitos
+
+- **Duas camadas contra força bruta.** O rate limit por IP para um robô numa máquina só. O
+  bloqueio por conta para um ataque **distribuído** (milhares de IPs testando a senha de uma conta).
+  Uma camada cobre o buraco da outra.
+- **O dilema do bloqueio.** Bloquear para sempre deixaria qualquer um trancar a conta do chefe
+  errando a senha de propósito (negação de serviço). Por isso o bloqueio dura 15 minutos e o Admin
+  pode desbloquear. Durante o bloqueio, as tentativas não estendem o prazo.
+- **Não revelar nada.** E-mail inexistente, senha errada e conta bloqueada devolvem exatamente a
+  mesma resposta, no mesmo tempo. Se a API dissesse "conta bloqueada", o atacante descobriria que
+  aquele e-mail existe. A mensagem avisa sobre o bloqueio de forma genérica, para todo mundo.
+- **UPDATE atômico no contador.** `SET FailedLoginCount = FailedLoginCount + 1` roda no banco, numa
+  instrução só. Ler o valor, somar no C# e gravar perderia tentativas simultâneas (mesma condição de
+  corrida da etapa 12). Há um teste que manda 5 tentativas ao mesmo tempo.
+- **Security stamp (carimbo de segurança).** Um JWT não pode ser apagado. Então guardamos no
+  usuário um valor aleatório que também vai no token. Trocar a senha troca o valor, e todo token
+  antigo deixa de bater na conferência que já fazíamos a cada requisição. É o mesmo mecanismo do
+  ASP.NET Core Identity.
+- **Por que trocar a senha derruba as outras sessões.** Se alguém descobriu sua senha e entrou, você
+  troca a senha e o invasor cai na hora. A sua sessão continua porque a API devolve um cookie novo.
+- **Auditoria "só de inserção".** O registro entra no mesmo `SaveChanges` da ação: não existe
+  "usuário criado" sem o registro, nem registro de algo que falhou. A API não tem rota para editar
+  ou apagar. Guarda o e-mail como texto, para continuar legível depois que o usuário for removido.
+- **O que NUNCA vai para o log.** Senha (nem a errada, que costuma ser a certa com um erro de
+  digitação), chave de API e token. Há teste que confere que a senha digitada não aparece.
+- **Dado pessoal.** IP e e-mail são dados pessoais (LGPD). Em produção, a auditoria precisa de prazo
+  de retenção e acesso restrito, como já está (só Admin).
+- **O rate limit pegou o próprio teste.** No teste no navegador, as 5 senhas erradas esbarraram
+  primeiro no limite de 5 logins por minuto por IP ("Muitas requisições"). Era a primeira camada
+  funcionando. Para testar a segunda, subi a API local com um limite maior.
+
 ---
 
 ## Perguntas de entrevista
@@ -696,4 +745,19 @@ limit global, aí o Redis passaria a valer a pena.
 **Qual bug de concorrência você encontrou?**
 Ao subir duas réplicas juntas, as duas aplicaram as migrations ao mesmo tempo e uma quebrou.
 Resolvi com uma advisory lock do PostgreSQL, e escrevi um teste que sobe as duas em paralelo.
+
+**Como você protege o login contra força bruta?**
+Em duas camadas: rate limit por IP e bloqueio temporário da conta depois de 5 senhas erradas. O
+bloqueio é temporário para não virar ferramenta de negação de serviço, e a resposta é igual para
+e-mail inexistente, senha errada e conta bloqueada, para não revelar quais contas existem.
+
+**Se alguém descobrir a senha de um usuário, como você expulsa essa pessoa?**
+O usuário troca a senha. Isso gera um novo carimbo de segurança, que vai dentro do token e é
+conferido a cada requisição. Todos os tokens antigos param de valer na hora, menos o da sessão de
+quem trocou, que recebe um cookie novo.
+
+**O que vai para a auditoria e o que não vai?**
+Vão logins, bloqueios, troca de senha e alterações de usuários, aplicações e chaves, com quem,
+quando e o IP. Nunca vão senhas, chaves ou tokens. O registro é gravado na mesma transação da ação
+e não pode ser editado pela API.
 

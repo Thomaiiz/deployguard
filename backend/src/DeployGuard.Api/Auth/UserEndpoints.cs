@@ -9,10 +9,12 @@ namespace DeployGuard.Api.Auth;
 
 public sealed record CreateUserRequest(string? Email, string? Password, UserRole? Role);
 
-public sealed record UserResponse(Guid Id, string Email, UserRole Role, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt)
+public sealed record UserResponse(
+    Guid Id, string Email, UserRole Role, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt, DateTimeOffset? LockedUntil)
 {
     // Nunca devolvemos o hash da senha, nem para administradores.
-    public static UserResponse From(User u) => new(u.Id, u.Email, u.Role, u.CreatedAt, u.LastLoginAt);
+    public static UserResponse From(User u, DateTimeOffset now) =>
+        new(u.Id, u.Email, u.Role, u.CreatedAt, u.LastLoginAt, u.IsLockedOut(now) ? u.LockoutEnd : null);
 }
 
 public static class UserEndpoints
@@ -26,15 +28,21 @@ public static class UserEndpoints
         group.MapGet("/", ListAsync);
         group.MapPost("/", CreateAsync).RequireRateLimiting(RateLimitingSetup.WritePolicy);
         group.MapDelete("/{id:guid}", DeleteAsync).RequireRateLimiting(RateLimitingSetup.WritePolicy);
+        group.MapPost("/{id:guid}/unlock", UnlockAsync).RequireRateLimiting(RateLimitingSetup.WritePolicy);
 
         return api;
     }
 
-    private static async Task<IResult> ListAsync(DeployGuardDbContext db, CancellationToken ct) =>
-        Results.Ok((await db.Users.AsNoTracking().OrderBy(u => u.Email).ToListAsync(ct)).Select(UserResponse.From));
+    private static async Task<IResult> ListAsync(DeployGuardDbContext db, TimeProvider time, CancellationToken ct)
+    {
+        var now = time.GetUtcNow();
+        var users = await db.Users.AsNoTracking().OrderBy(u => u.Email).ToListAsync(ct);
+        return Results.Ok(users.Select(u => UserResponse.From(u, now)));
+    }
 
     private static async Task<IResult> CreateAsync(
         CreateUserRequest request,
+        HttpContext http,
         DeployGuardDbContext db,
         IPasswordHasher<User> hasher,
         TimeProvider time,
@@ -73,11 +81,12 @@ public static class UserEndpoints
         user.PasswordHash = hasher.HashPassword(user, request.Password!);
 
         db.Users.Add(user);
+        Audit.Record(db, http, AuditAction.UserCreated, "user", user.Id.ToString(), $"{user.Email} ({user.Role})");
         await db.SaveChangesAsync(ct);
-        return Results.Created($"/api/users/{user.Id}", UserResponse.From(user));
+        return Results.Created($"/api/users/{user.Id}", UserResponse.From(user, time.GetUtcNow()));
     }
 
-    private static async Task<IResult> DeleteAsync(Guid id, ClaimsPrincipal principal, DeployGuardDbContext db, CancellationToken ct)
+    private static async Task<IResult> DeleteAsync(Guid id, ClaimsPrincipal principal, HttpContext http, DeployGuardDbContext db, CancellationToken ct)
     {
         if (principal.FindFirstValue(AuthSetup.SubjectClaim) == id.ToString())
         {
@@ -91,6 +100,22 @@ public static class UserEndpoints
         }
 
         db.Users.Remove(user);
+        Audit.Record(db, http, AuditAction.UserDeleted, "user", user.Id.ToString(), user.Email);
+        await db.SaveChangesAsync(ct);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> UnlockAsync(Guid id, HttpContext http, DeployGuardDbContext db, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null)
+        {
+            return Results.NotFound();
+        }
+
+        user.FailedLoginCount = 0;
+        user.LockoutEnd = null;
+        Audit.Record(db, http, AuditAction.UserUnlocked, "user", user.Id.ToString(), user.Email);
         await db.SaveChangesAsync(ct);
         return Results.NoContent();
     }

@@ -350,6 +350,45 @@ a {
   padding: 0.65rem 0.9rem;
   margin: 0 0 1rem;
 }
+/* Filtro no cabeçalho de uma página (ex.: ação na auditoria) */
+.filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.filter select {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Botões dentro de uma linha de tabela */
+.row-actions {
+  white-space: nowrap;
+}
+.row-actions .btn + .btn {
+  margin-left: 0.5rem;
+}
+
+/* Mensagem de sucesso (ex.: senha alterada) */
+.notice {
+  background: var(--up-bg);
+  color: var(--up);
+  border-radius: 8px;
+  padding: 0.65rem 0.9rem;
+  margin: 0 0 1rem;
+}
+
+/* Linha de auditoria que merece atenção (login recusado, conta bloqueada) */
+.row--warning td {
+  color: var(--degraded);
+}
+
 .empty {
   text-align: center;
   padding: 2.5rem 1rem;

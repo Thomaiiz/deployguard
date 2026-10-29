@@ -22,6 +22,20 @@ export function errorMessage(error: unknown): string {
   return 'Erro inesperado.';
 }
 
+/** Título e detalhe juntos, quando os dois dizem coisas diferentes (ex.: login recusado). */
+export function fullErrorMessage(error: unknown): string {
+  const problem = asProblem(error);
+  if (
+    problem?.title &&
+    problem.detail &&
+    error instanceof HttpErrorResponse &&
+    error.status !== 429
+  ) {
+    return `${problem.title} ${problem.detail}`;
+  }
+  return errorMessage(error);
+}
+
 function asProblem(error: unknown): ProblemDetails | null {
   if (error instanceof HttpErrorResponse && error.error && typeof error.error === 'object') {
     return error.error as ProblemDetails;

@@ -24,6 +24,7 @@ public sealed class TokenService(IOptions<AuthOptions> options, TimeProvider tim
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new Claim(JwtRegisteredClaimNames.Email, user.Email),
             new Claim(AuthSetup.RoleClaim, user.Role.ToString()),
+            new Claim(AuthSetup.SecurityStampClaim, user.SecurityStamp.ToString()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
 
