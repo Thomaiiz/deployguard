@@ -1,4 +1,6 @@
 using DeployGuard.Api.Data;
+using DeployGuard.Api.Deployments;
+using DeployGuard.Api.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -15,6 +17,7 @@ public sealed class AlertDispatcher(
     IServiceScopeFactory scopeFactory,
     IAlertSender sender,
     IOptionsMonitor<AlertingOptions> options,
+    IOptionsMonitor<DeploymentOptions> deploymentOptions,
     TimeProvider time,
     ILogger<AlertDispatcher> logger) : BackgroundService
 {
@@ -83,6 +86,14 @@ public sealed class AlertDispatcher(
                 continue;
             }
 
+            // No alerta de queda, já aponta o deploy suspeito: é a primeira pergunta de quem está de plantão.
+            var suspect = notification.EventType == AlertEventType.IncidentOpened
+                ? SuspectedDeployment.From(
+                    await DeploymentQueries.SuspectForAsync(db, incident.ApplicationId, incident.StartedAt,
+                        TimeSpan.FromMinutes(deploymentOptions.CurrentValue.CorrelationWindowMinutes), ct),
+                    incident.StartedAt)
+                : null;
+
             var message = new AlertMessage(
                 notification.EventType,
                 incident.Id,
@@ -92,7 +103,8 @@ public sealed class AlertDispatcher(
                 incident.ResolvedAt,
                 incident.Cause,
                 incident.Summary,
-                DashboardLink(settings.DashboardBaseUrl, incident.ApplicationId));
+                DashboardLink(settings.DashboardBaseUrl, incident.ApplicationId),
+                suspect);
 
             try
             {

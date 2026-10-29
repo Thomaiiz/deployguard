@@ -369,6 +369,66 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
 - **Open redirect.** O `returnUrl` vem da URL, então um link malicioso poderia mandar o usuário para
   outro site depois do login. `safeReturnUrl` só aceita caminhos que começam com uma única `/`.
 
+## Etapa 10 (quarta fase): registro de deploys
+
+### O que mudou
+
+- Tabelas novas: `deployments` (versão, commit, link, quando, quem registrou) e `api_keys`.
+- Um segundo jeito de autenticar, só para máquinas: **chave de API** no cabeçalho
+  `Authorization: Bearer dg_...`.
+- `POST /api/applications/{id}/deployments` aceita um Admin logado **ou** uma chave de API.
+- Incidentes ganharam `suspectedDeployment`, e o alerta do Slack passou a dizer
+  "Último deploy: v1.4.2, 3 min antes".
+- No Angular: tabela de deploys e formulário no detalhe, linhas tracejadas no gráfico nos momentos
+  de deploy, coluna "Deploy suspeito" nos incidentes e a tela **Chaves de API**.
+- Exemplo de workflow em `docs/exemplos/avisar-deploy.yml`.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `dotnet ef migrations add AddDeploymentsAndApiKeys` | Gera a migration das duas tabelas novas e do índice `(ApplicationId, DeployedAt)`. |
+| `curl -H "Authorization: Bearer dg_..."` | Manda a chave de API no cabeçalho padrão de autenticação HTTP. É assim que o CI se identifica. |
+| `jq -n --arg ... '{...}'` | No workflow, monta o JSON a partir de variáveis. Escapa aspas e quebras de linha (a mensagem do commit pode ter as duas). Montar JSON concatenando texto é um bug clássico. |
+| `${GITHUB_SHA::7}` | Sintaxe do bash: os 7 primeiros caracteres do hash do commit, o "hash curto". |
+
+### Conceitos
+
+- **Por que correlacionar deploy e incidente.** Estudos de confiabilidade (como os relatórios DORA)
+  mostram que a maior parte dos incidentes vem de mudanças: deploys e configuração. Mostrar o
+  deploy logo antes da queda encurta o MTTR (tempo médio até recuperar), porque o time já sabe
+  o que reverter. Chamamos de **suspeito**, não de **causa**: correlação não é causalidade.
+- **Autenticação de pessoas x de máquinas.** Pessoas fazem login com senha e recebem um cookie.
+  Um pipeline de CI não tem navegador nem pode digitar senha, então recebe uma credencial própria:
+  a chave de API. São dois **esquemas de autenticação** no ASP.NET Core (`JwtBearer` e `ApiKey`),
+  e a política `deployment-writer` aceita qualquer um dos dois.
+- **Menor privilégio.** A chave só vale para o endpoint de registrar deploy. Os outros endpoints
+  usam só o esquema do cookie, então para eles a chave nem é lida, e a resposta é `401`. Se a chave
+  vazar, o estrago máximo é alguém registrar um deploy falso, não ler nem apagar dados.
+- **Por que SHA-256 serve para a chave, mas não para a senha.** A senha de uma pessoa é fraca e
+  previsível, então precisa de hash **lento** (PBKDF2) para atrasar quem tenta adivinhar. A chave
+  de API tem 256 bits aleatórios: não dá para adivinhar nem com hash rápido. E o hash rápido
+  importa, porque a chave é conferida em toda chamada.
+- **Mostrar a chave uma vez só.** Como guardamos apenas o hash, nem o servidor sabe mais a chave
+  depois de criá-la. É o mesmo modelo do GitHub (tokens) e da AWS (access keys). Perdeu? Revoga e
+  cria outra. O prefixo `dg_` ajuda ferramentas de varredura de segredos a reconhecer uma chave
+  vazada num repositório.
+- **Auditoria.** Cada deploy guarda quem o registrou (`admin@...` ou `chave: github-actions`).
+  Cada chave guarda quem a criou e quando foi usada pela última vez, o que ajuda a achar chaves
+  esquecidas.
+- **XSS por link.** O Angular escapa texto, mas um `href="javascript:alert(1)"` executaria código
+  ao clicar. Por isso a API só aceita links `https`, e há teste para `javascript:` e `data:`.
+- **Subconsulta correlacionada.** Na listagem de incidentes, o deploy suspeito de cada linha é
+  buscado dentro da mesma consulta SQL (o EF Core gera um `LEFT JOIN LATERAL` no PostgreSQL). Uma
+  consulta separada por incidente seria o problema **N+1**: 50 incidentes, 51 idas ao banco.
+- **Gráfico com eixo por ordem, marca por tempo.** O eixo X do gráfico é a ordem das verificações.
+  Para desenhar o deploy no lugar certo, o componente acha as duas verificações em volta do horário
+  do deploy e **interpola** a posição entre elas.
+- **Bug encontrado no teste ponta a ponta.** O proxy do `ng serve` encaminhava tudo que começava
+  com `/api`, inclusive a página `/api-keys` do Angular, que caía no backend e voltava 401. A
+  correção foi trocar a rota para `/keys` e o proxy para `/api/` (com barra). Teste unitário não
+  pega esse tipo de erro de integração.
+
 ---
 
 ## Perguntas de entrevista
@@ -456,3 +516,16 @@ gravada nem devolvida. A política exige comprimento (12+) em vez de símbolos o
 **Qual a diferença entre 401 e 403?**
 `401`: não sei quem você é (sem login ou token inválido). `403`: sei quem você é, mas você não tem
 permissão (um Viewer tentando cadastrar uma aplicação).
+
+**Como o CI se autentica no DeployGuard? Por que não usar o login normal?**
+Com uma chave de API no cabeçalho `Authorization`. O CI não tem navegador para guardar cookie, e
+colocar a senha de uma pessoa no pipeline misturaria identidades e daria acesso total. A chave tem
+escopo mínimo (só registrar deploy), pode ser revogada sozinha e é auditada.
+
+**Como você guarda as chaves de API?**
+Só o hash SHA-256. A chave é mostrada uma vez na criação. Como ela tem 256 bits aleatórios, hash
+rápido é suficiente; senha de pessoa é que precisa de hash lento.
+
+**Como o sistema sabe que um deploy causou o incidente?**
+Ele não sabe, e isso é proposital. Ele mostra o deploy mais recente até 30 minutos antes do
+incidente como **suspeito**. É uma pista que encurta a investigação, não uma conclusão.

@@ -7,6 +7,7 @@
     <nav class="topbar__user">
       @if (auth.isAdmin()) {
         <a routerLink="/users">Usuários</a>
+        <a routerLink="/keys">Chaves de API</a>
       }
       <span class="muted" data-testid="current-user">{{ user.email }} · {{ user.role }}</span>
       <button type="button" class="btn btn--ghost" (click)="logout()">Sair</button>

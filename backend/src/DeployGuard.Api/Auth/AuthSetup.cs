@@ -1,5 +1,6 @@
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Domain;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -12,6 +13,7 @@ namespace DeployGuard.Api.Auth;
 public static class AuthSetup
 {
     public const string AdminPolicy = "admin";
+    public const string DeploymentWriterPolicy = "deployment-writer";
     public const string RoleClaim = "role";
     public const string EmailClaim = "email";
     public const string SubjectClaim = "sub";
@@ -27,7 +29,8 @@ public static class AuthSetup
         services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer();
+            .AddJwtBearer()
+            .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationHandler.SchemeName, null);
 
         // Configurado à parte para poder ler AuthOptions já validadas.
         services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
@@ -56,6 +59,13 @@ public static class AuthSetup
                     OnMessageReceived = context =>
                     {
                         context.Token = context.Request.Cookies[AuthOptions.CookieName];
+                        if (string.IsNullOrEmpty(context.Token))
+                        {
+                            // Sem cookie, para aqui. Senão o JwtBearer tentaria ler o cabeçalho
+                            // Authorization, que é onde chegam as chaves de API ("dg_...").
+                            context.NoResult();
+                        }
+
                         return Task.CompletedTask;
                     },
 
@@ -88,7 +98,14 @@ public static class AuthSetup
         services.AddAuthorizationBuilder()
             // Política padrão "fechada": todo endpoint exige login, a não ser que diga o contrário.
             .SetFallbackPolicy(new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build())
-            .AddPolicy(AdminPolicy, policy => policy.RequireRole(nameof(UserRole.Admin)));
+            .AddPolicy(AdminPolicy, policy => policy.RequireRole(nameof(UserRole.Admin)))
+            // Registrar deploy: um Admin logado no dashboard OU o pipeline de CI com uma chave de API.
+            .AddPolicy(DeploymentWriterPolicy, policy => policy
+                .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, ApiKeyAuthenticationHandler.SchemeName)
+                .RequireAuthenticatedUser()
+                .RequireAssertion(ctx =>
+                    ctx.User.IsInRole(nameof(UserRole.Admin))
+                    || ctx.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, ApiKeyAuthenticationHandler.DeploymentsWriteScope)));
 
         return services;
     }

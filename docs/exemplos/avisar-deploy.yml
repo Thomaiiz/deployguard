@@ -1,0 +1,46 @@
+# Exemplo: copie para .github/workflows/ do repositório da SUA aplicação (não deste).
+# Depois de cada deploy em produção, avisa o DeployGuard qual versão subiu.
+#
+# Configure em Settings → Secrets and variables → Actions:
+#   DEPLOYGUARD_URL      ex.: https://deployguard.suaempresa.com
+#   DEPLOYGUARD_API_KEY  a chave criada em "Chaves de API" no dashboard (segredo!)
+#   DEPLOYGUARD_APP_ID   o ID da aplicação, mostrado na página dela no dashboard
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # ... aqui entram os passos do seu deploy de verdade ...
+
+      - name: Avisar o DeployGuard
+        # Roda só se o deploy deu certo. Se o DeployGuard estiver fora, não derruba o pipeline.
+        if: success()
+        continue-on-error: true
+        env:
+          DEPLOYGUARD_URL: ${{ secrets.DEPLOYGUARD_URL }}
+          DEPLOYGUARD_API_KEY: ${{ secrets.DEPLOYGUARD_API_KEY }}
+          DEPLOYGUARD_APP_ID: ${{ secrets.DEPLOYGUARD_APP_ID }}
+        run: |
+          # jq monta o JSON com segurança (escapa aspas da mensagem do commit, por exemplo).
+          body=$(jq -n \
+            --arg version "${GITHUB_SHA::7}" \
+            --arg sha "$GITHUB_SHA" \
+            --arg description "${{ github.event.head_commit.message }}" \
+            --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{version: $version, commitSha: $sha, description: ($description | .[0:500]), url: $url}')
+
+          curl --fail --silent --show-error --max-time 10 \
+            -X POST "$DEPLOYGUARD_URL/api/applications/$DEPLOYGUARD_APP_ID/deployments" \
+            -H "Authorization: Bearer $DEPLOYGUARD_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$body"

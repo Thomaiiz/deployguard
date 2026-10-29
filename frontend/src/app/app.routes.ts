@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { ApiKeys } from './api-keys/api-keys';
 import { ApplicationDetail } from './application-detail/application-detail';
 import { adminGuard, authGuard, guestGuard } from './core/auth.guard';
 import { Dashboard } from './dashboard/dashboard';
@@ -18,6 +19,12 @@ export const routes: Routes = [
         component: Users,
         canActivate: [adminGuard],
         title: 'DeployGuard · Usuários',
+      },
+      {
+        path: 'keys',
+        component: ApiKeys,
+        canActivate: [adminGuard],
+        title: 'DeployGuard · Chaves de API',
       },
     ],
   },

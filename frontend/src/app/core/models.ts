@@ -88,6 +88,51 @@ export interface Incident {
   summary: string | null;
   notificationsSent: number;
   notificationsFailed: number;
+  suspectedDeployment: SuspectedDeployment | null;
+}
+
+/** Deploy que aconteceu pouco antes do incidente: uma pista, não uma prova. */
+export interface SuspectedDeployment {
+  id: number;
+  version: string;
+  commitSha: string | null;
+  deployedAt: string;
+  minutesBeforeIncident: number;
+}
+
+export interface Deployment {
+  id: number;
+  applicationId: string;
+  applicationName: string;
+  version: string;
+  commitSha: string | null;
+  description: string | null;
+  url: string | null;
+  deployedAt: string;
+  registeredBy: string;
+}
+
+export interface CreateDeploymentRequest {
+  version: string;
+  commitSha?: string | null;
+  description?: string | null;
+  url?: string | null;
+  deployedAt?: string | null;
+}
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  createdAt: string;
+  createdBy: string;
+  lastUsedAt: string | null;
+}
+
+/** Única resposta com a chave completa: ela não pode ser recuperada depois. */
+export interface CreatedApiKey {
+  apiKey: ApiKey;
+  key: string;
 }
 
 export type IncidentStatusFilter = 'All' | 'Open' | 'Resolved';

@@ -65,6 +65,7 @@
               <th>Fim</th>
               <th>Duração</th>
               <th>Causa</th>
+              <th>Deploy suspeito</th>
               <th>Alertas</th>
             </tr>
           </thead>
@@ -81,6 +82,18 @@
                 </td>
                 <td>{{ incident.durationSeconds | duration }}</td>
                 <td [title]="incident.summary ?? ''">{{ errorLabels[incident.cause] }}</td>
+                <td data-testid="suspected-deploy">
+                  @if (incident.suspectedDeployment; as d) {
+                    <strong>{{ d.version }}</strong>
+                    <span class="muted">
+                      ·
+                      {{ d.minutesBeforeIncident < 1 ? 'menos de 1' : d.minutesBeforeIncident }} min
+                      antes</span
+                    >
+                  } @else {
+                    <span class="muted">—</span>
+                  }
+                </td>
                 <td>
                   {{ incident.notificationsSent }} enviados
                   @if (incident.notificationsFailed > 0) {
@@ -97,7 +110,71 @@
 
   <section class="card">
     <h2>Latência recente</h2>
-    <dg-latency-chart [results]="checks()" />
+    <dg-latency-chart [results]="checks()" [deployments]="deployments()" />
+  </section>
+
+  <section class="card">
+    <div class="card__header">
+      <h2>Deploys</h2>
+      @if (auth.isAdmin()) {
+        <button
+          type="button"
+          class="btn btn--ghost"
+          (click)="showDeployForm.set(!showDeployForm())"
+        >
+          {{ showDeployForm() ? 'Fechar' : 'Registrar deploy' }}
+        </button>
+      }
+    </div>
+    @if (showDeployForm() && auth.isAdmin()) {
+      <dg-register-deployment-form
+        [applicationId]="app.id"
+        (registered)="onDeploymentRegistered()"
+      />
+    }
+    @if (deployments().length === 0) {
+      <p class="muted">
+        Nenhum deploy registrado. O pipeline de CI pode avisar cada deploy usando uma chave de API e
+        o ID desta aplicação: <code>{{ app.id }}</code>
+      </p>
+    } @else {
+      <div class="table-wrapper">
+        <table data-testid="deployments-table">
+          <thead>
+            <tr>
+              <th>Quando</th>
+              <th>Versão</th>
+              <th>Commit</th>
+              <th>Descrição</th>
+              <th>Registrado por</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (d of deployments(); track d.id) {
+              <tr>
+                <td>{{ d.deployedAt | date: 'dd/MM HH:mm:ss' }}</td>
+                <td>
+                  <!-- A API só aceita links https, então [href] nunca vira "javascript:". -->
+                  @if (d.url) {
+                    <a [href]="d.url" target="_blank" rel="noopener noreferrer">{{ d.version }}</a>
+                  } @else {
+                    {{ d.version }}
+                  }
+                </td>
+                <td>
+                  <code>{{ d.commitSha ? d.commitSha.slice(0, 7) : '—' }}</code>
+                </td>
+                <td>{{ d.description ?? '—' }}</td>
+                <td class="muted">{{ d.registeredBy }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        ID desta aplicação para o CI: <code>{{ app.id }}</code>
+      </p>
+    }
   </section>
 
   <section class="card">

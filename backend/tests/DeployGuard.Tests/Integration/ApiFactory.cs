@@ -37,6 +37,8 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     protected virtual int LoginRequestsPerMinute => 1_000;
 
+    protected virtual int MaxApplications => 5;
+
     public async Task InitializeAsync()
     {
         var baseConnection = Environment.GetEnvironmentVariable("DEPLOYGUARD_TEST_CONNECTION");
@@ -61,7 +63,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Monitoring:SchedulerEnabled", "false");
         builder.UseSetting("Monitoring:AllowedHosts:0", "example.com");
         builder.UseSetting("Monitoring:AllowedHosts:1", "*.example.com");
-        builder.UseSetting("Monitoring:MaxApplications", "5");
+        builder.UseSetting("Monitoring:MaxApplications", MaxApplications.ToString());
         builder.UseSetting("RateLimiting:WriteRequestsPerMinute", WriteRequestsPerMinute.ToString());
         builder.UseSetting("RateLimiting:ReadRequestsPerMinute", "1000");
         builder.UseSetting("RateLimiting:LoginRequestsPerMinute", LoginRequestsPerMinute.ToString());
@@ -144,3 +146,8 @@ public sealed class StrictRateLimitApiFactory : ApiFactory
 }
 
 public sealed class AuthApiFactory : ApiFactory;
+
+public sealed class DeploymentApiFactory : ApiFactory
+{
+    protected override int MaxApplications => 50;
+}

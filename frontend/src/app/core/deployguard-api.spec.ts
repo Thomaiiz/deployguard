@@ -65,4 +65,13 @@ describe('DeployGuardApi', () => {
     expect(request.request.params.get('status')).toBe('Open');
     request.flush([]);
   });
+
+  it('registers a deployment under the application path', () => {
+    api.createDeployment('app-1', { version: 'v1.0.0' }).subscribe();
+
+    const request = http.expectOne('/api/applications/app-1/deployments');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual({ version: 'v1.0.0' });
+    request.flush({});
+  });
 });

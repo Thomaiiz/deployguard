@@ -7,6 +7,7 @@ import { AuthService } from '../core/auth';
 import { DeployGuardApi } from '../core/deployguard-api';
 import {
   ApplicationStats,
+  Deployment,
   HealthCheckResult,
   Incident,
   MonitoredApplication,
@@ -17,6 +18,7 @@ import { ERROR_LABELS } from '../shared/error-labels';
 import { RelativeTimePipe } from '../shared/relative-time.pipe';
 import { StatusBadge } from '../shared/status-badge';
 import { LatencyChart } from './latency-chart';
+import { RegisterDeploymentForm } from './register-deployment-form';
 
 const REFRESH_MS = 15_000;
 const PAGE_SIZE = 50;
@@ -31,6 +33,7 @@ const PAGE_SIZE = 50;
     RelativeTimePipe,
     DurationPipe,
     LatencyChart,
+    RegisterDeploymentForm,
   ],
   templateUrl: './application-detail.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -46,6 +49,8 @@ export class ApplicationDetail {
   protected readonly app = signal<MonitoredApplication | null>(null);
   protected readonly stats = signal<ApplicationStats | null>(null);
   protected readonly incidents = signal<Incident[]>([]);
+  protected readonly deployments = signal<Deployment[]>([]);
+  protected readonly showDeployForm = signal(false);
   protected readonly checks = signal<HealthCheckResult[]>([]);
   protected readonly nextCursor = signal<string | null>(null);
   protected readonly error = signal<string | null>(null);
@@ -63,6 +68,7 @@ export class ApplicationDetail {
                 this.api.getApplication(id),
                 this.api.getStats(id),
                 this.api.listApplicationIncidents(id),
+                this.api.listDeployments(id),
               ]).pipe(
                 catchError((err) => {
                   this.error.set(errorMessage(err));
@@ -74,15 +80,24 @@ export class ApplicationDetail {
         ),
         takeUntilDestroyed(),
       )
-      .subscribe(([app, stats, incidents]) => {
+      .subscribe(([app, stats, incidents, deployments]) => {
         this.app.set(app);
         this.stats.set(stats);
         this.incidents.set(incidents);
+        this.deployments.set(deployments);
         this.error.set(null);
         this.now.set(Date.now());
       });
 
     effect(() => this.reloadHistory(this.id()));
+  }
+
+  protected onDeploymentRegistered(): void {
+    this.showDeployForm.set(false);
+    this.api.listDeployments(this.id()).subscribe({
+      next: (deployments) => this.deployments.set(deployments),
+      error: (err) => this.error.set(errorMessage(err)),
+    });
   }
 
   protected reloadHistory(id = this.id()): void {

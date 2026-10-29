@@ -50,6 +50,13 @@
           }}</a>
           fora do ar {{ incident.startedAt | relativeTime: now() }} ·
           {{ incident.summary ?? incident.cause }}
+          @if (incident.suspectedDeployment; as d) {
+            ·
+            <strong
+              >{{ d.minutesBeforeIncident < 1 ? 'menos de 1' : d.minutesBeforeIncident }} min após o
+              deploy {{ d.version }}</strong
+            >
+          }
         </li>
       }
     </ul>

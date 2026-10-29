@@ -1,0 +1,79 @@
+<section class="page-header">
+  <div>
+    <h1>Chaves de API</h1>
+    <p class="muted">
+      Usadas pelo pipeline de CI/CD para avisar o DeployGuard de cada deploy. Uma chave só consegue
+      registrar deploys, nada mais.
+    </p>
+  </div>
+</section>
+
+@if (newKey(); as key) {
+  <section class="card key-reveal" role="status" data-testid="new-key">
+    <h2>Copie a chave agora</h2>
+    <p>Ela não será mostrada de novo. Guarde-a como segredo no seu CI (ex.: GitHub Secrets).</p>
+    <code class="key-reveal__value">{{ key }}</code>
+    <div class="actions">
+      <button type="button" class="btn" (click)="copy(key)">
+        {{ copied() ? 'Copiada!' : 'Copiar' }}
+      </button>
+      <button type="button" class="btn btn--ghost" (click)="newKey.set(null)">Já guardei</button>
+    </div>
+  </section>
+}
+
+<form class="card form" [formGroup]="form" (ngSubmit)="submit()" novalidate>
+  <h2>Nova chave</h2>
+  <label>
+    Nome
+    <input
+      type="text"
+      formControlName="name"
+      placeholder="github-actions-loja"
+      autocomplete="off"
+    />
+    @for (message of serverErrors()['name'] ?? []; track message) {
+      <span class="field-error">{{ message }}</span>
+    }
+  </label>
+  <button type="submit" class="btn">Criar chave</button>
+</form>
+
+@if (error(); as message) {
+  <p class="alert" role="alert">{{ message }}</p>
+}
+
+<section class="card">
+  @if (keys().length === 0) {
+    <p class="muted">Nenhuma chave criada.</p>
+  } @else {
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Nome</th>
+            <th>Início da chave</th>
+            <th>Criada</th>
+            <th>Último uso</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (key of keys(); track key.id) {
+            <tr data-testid="api-key-row">
+              <td>{{ key.name }}</td>
+              <td>
+                <code>{{ key.prefix }}…</code>
+              </td>
+              <td>{{ key.createdAt | date: 'dd/MM/yyyy' }} · {{ key.createdBy }}</td>
+              <td>{{ key.lastUsedAt ? (key.lastUsedAt | date: 'dd/MM HH:mm') : 'nunca' }}</td>
+              <td>
+                <button type="button" class="btn btn--danger" (click)="revoke(key)">Revogar</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

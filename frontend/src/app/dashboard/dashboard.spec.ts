@@ -103,6 +103,7 @@ describe('Dashboard', () => {
       summary: 'Sem resposta em 5s.',
       notificationsSent: 1,
       notificationsFailed: 0,
+      suspectedDeployment: null,
     };
 
     const element = await setup({
@@ -129,5 +130,39 @@ describe('Dashboard', () => {
     const asViewer = await setup({ listApplications: () => of([]) }, false);
     expect(asViewer.textContent).not.toContain('Nova aplicação');
     expect(asViewer.textContent).toContain('Peça a um administrador');
+  });
+
+  it('points to the deploy that happened right before the incident', async () => {
+    const down = app({ name: 'Loja', lastStatus: 'Down' });
+    const incident: Incident = {
+      id: 2,
+      applicationId: down.id,
+      applicationName: 'Loja',
+      startedAt: new Date().toISOString(),
+      resolvedAt: null,
+      isOpen: true,
+      durationSeconds: 30,
+      cause: 'UnexpectedStatusCode',
+      httpStatusCode: 500,
+      summary: 'HTTP 500',
+      notificationsSent: 0,
+      notificationsFailed: 0,
+      suspectedDeployment: {
+        id: 7,
+        version: 'v2.3.0',
+        commitSha: null,
+        deployedAt: new Date().toISOString(),
+        minutesBeforeIncident: 3,
+      },
+    };
+
+    const element = await setup({
+      listApplications: () => of([down]),
+      listIncidents: () => of([incident]),
+    });
+
+    expect(element.querySelector('[data-testid=incident-banner]')?.textContent).toContain(
+      '3 min após o deploy v2.3.0',
+    );
   });
 });

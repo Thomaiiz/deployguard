@@ -3,6 +3,7 @@ using DeployGuard.Api.Alerting;
 using DeployGuard.Api.Applications;
 using DeployGuard.Api.Auth;
 using DeployGuard.Api.Data;
+using DeployGuard.Api.Deployments;
 using DeployGuard.Api.History;
 using DeployGuard.Api.Incidents;
 using DeployGuard.Api.Infrastructure;
@@ -29,6 +30,10 @@ builder.Services.AddAlerting(builder.Configuration);
 builder.Services.AddSingleton<ApplicationValidator>();
 builder.Services.AddApiRateLimiting(builder.Configuration);
 builder.Services.AddDeployGuardAuth(builder.Configuration);
+builder.Services.AddOptions<DeploymentOptions>()
+    .Bind(builder.Configuration.GetSection(DeploymentOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 builder.Services.ConfigureHttpJsonOptions(json =>
     json.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -83,9 +88,11 @@ app.MapHealthChecks("/health").AllowAnonymous();
 var api = app.MapGroup("/api").RequireRateLimiting(RateLimitingSetup.ReadPolicy);
 api.MapAuthEndpoints();
 api.MapUserEndpoints();
+api.MapApiKeyEndpoints();
 api.MapApplicationEndpoints();
 api.MapHistoryEndpoints();
 api.MapIncidentEndpoints();
+api.MapDeploymentEndpoints();
 
 app.Run();
 
