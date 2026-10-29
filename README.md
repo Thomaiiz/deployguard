@@ -14,6 +14,9 @@ Funcionalidades atuais:
 - **Etapa 4:** **registro de deploys**. O pipeline de CI avisa cada versão que vai para produção
   (com uma chave de API), e o DeployGuard mostra os deploys no gráfico e aponta o **deploy
   suspeito** quando um incidente começa logo depois de um deploy, inclusive no alerta do Slack.
+- **Etapa 5:** **painel em tempo real**. O dashboard recebe avisos do servidor por
+  **Server-Sent Events** e se atualiza em menos de um segundo quando uma verificação termina, um
+  incidente abre ou fecha, ou um deploy é registrado.
 
 | Camada | Tecnologia |
 |---|---|
@@ -118,12 +121,16 @@ flowchart LR
             scheduler[HealthCheckScheduler<br/>BackgroundService]
             checker[HealthChecker<br/>+ SafeSocketConnector]
             dispatcher[AlertDispatcher<br/>BackgroundService]
+            hub[LiveEventHub<br/>pub/sub em memória]
         end
         db[(PostgreSQL)]
         demo[demo-app]
     end
 
     nginx -->|/api| endpoints
+    nginx -.->|/api/events SSE| hub
+    scheduler -.->|publica| hub
+    endpoints -.->|publica deploy| hub
     endpoints --> db
     scheduler --> db
     scheduler --> checker
@@ -191,6 +198,43 @@ um deploy. O DeployGuard procura o deploy mais recente da aplicação até
 alerta. É uma **pista** para a investigação, não uma prova de causa. A busca usa o índice
 `(ApplicationId, DeployedAt)` e, na listagem de incidentes, vira uma subconsulta na mesma ida ao
 banco.
+
+### Painel em tempo real
+
+```mermaid
+sequenceDiagram
+    participant B as Navegador (EventSource)
+    participant API as GET /api/events
+    participant H as LiveEventHub
+    participant S as Agendador
+    B->>API: conecta (cookie de sessão)
+    API-->>B: event: ready
+    S->>H: Publish(check, incident-opened)
+    H-->>API: fila desta conexão
+    API-->>B: event: check / event: incident-opened
+    B->>B: espera 500 ms juntando avisos
+    B->>API: GET /api/applications (dados completos)
+    Note over API,B: sem eventos por 15 s: event: ping<br/>depois de 5 min o servidor fecha e o navegador reconecta
+```
+
+- **Server-Sent Events (SSE)** é uma resposta HTTP comum (`text/event-stream`) que fica aberta e
+  recebe mensagens de texto do servidor. É só servidor → navegador, que é exatamente o caso do
+  dashboard. O `EventSource` do navegador reconecta sozinho e manda o cookie de sessão, então não
+  precisa de biblioteca, protocolo novo nem token na URL (como seria com WebSocket).
+- **O evento é só um aviso.** Ele diz "a aplicação X mudou", e a tela busca os dados na API, como
+  já fazia. Não existe um segundo estado montado a partir de eventos que possa divergir, e perder
+  um aviso não deixa a tela errada: o próximo aviso ou a atualização de segurança de 1 minuto
+  corrige.
+- **`LiveEventHub`**: cada conexão tem sua própria fila (`Channel`) limitada a 100 eventos. Se o
+  cliente for lento, os mais antigos são descartados (`DropOldest`), e quem publica nunca espera.
+  O agendador só publica **depois** de gravar no banco, para o aviso nunca chegar antes do dado.
+- **Proteções**: exige login como o resto da API (uma chave de CI não serve), máximo de
+  `MaxConnections` conexões (acima disso, `503` e a tela segue com a atualização de 1 minuto),
+  `ping` a cada 15 s para proxies não derrubarem a conexão parada, e duração máxima de 5 min: cada
+  reconexão passa pela autenticação de novo, então quem foi removido para de receber.
+- **No frontend**, uma conexão é compartilhada entre as telas (`share`), e uma rajada de avisos (uma
+  rodada de verificações) vira uma busca só (`auditTime`). O nginx tem um `location` próprio para
+  `/api/events` com `proxy_buffering off`, senão os eventos ficariam presos no buffer.
 
 ### Modelo de dados
 
@@ -281,9 +325,19 @@ agregar erros nas estatísticas e evita gravar detalhes internos de rede vindos 
 **`TimeProvider` e `IHealthChecker`.** Abstrações mínimas que existem por causa dos testes: o relógio
 pode ser controlado e as chamadas HTTP podem ser substituídas.
 
-**Angular com signals e polling.** O estado de cada tela fica em `signal`s e `computed`s. O polling
-usa RxJS (`timer` + `switchMap`), que cancela a requisição anterior se ela ainda estiver pendente.
-Server-Sent Events ou WebSockets seriam o próximo passo se a latência de 15 s incomodar.
+**Angular com signals, avisos ao vivo e polling de segurança.** O estado de cada tela fica em
+`signal`s e `computed`s. A busca dos dados é disparada por avisos ao vivo (SSE) ou, se o canal
+estiver fora, a cada minuto. O RxJS (`merge` + `switchMap`) cancela a requisição anterior se ela
+ainda estiver pendente, evitando respostas fora de ordem.
+
+**SSE em vez de WebSocket.** O dashboard só recebe; não precisa mandar nada pelo mesmo canal. SSE é
+HTTP puro: passa pelo nginx e pelo rate limit, usa o cookie e a autenticação que já existem e
+reconecta sozinho. WebSocket exigiria outro protocolo, autenticação própria no *handshake* e
+reconexão manual.
+
+**Pub/sub em memória.** Simples e sem infraestrutura nova, mas vale só dentro de uma instância.
+Com várias instâncias, cada uma publicaria só os próprios eventos. O caminho seria um barramento
+compartilhado: `LISTEN/NOTIFY` do PostgreSQL (já temos) ou Redis pub/sub.
 
 **Mesma origem via proxy reverso.** O navegador fala só com o nginx, que encaminha `/api`. Não
 existe CORS para configurar, e a API não fica exposta.
@@ -342,6 +396,8 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
   cadastro gera tráfego de saída, então o DeployGuard não vira ferramenta de flood.
 - **Concorrência máxima** de verificações (`MaxConcurrentChecks`).
 - **Página máxima** de 500 itens no histórico e janela máxima de 7 dias nas estatísticas.
+- **Conexões ao vivo** limitadas (`Live:MaxConnections`, padrão 100), com fila de no máximo 100
+  eventos por conexão e duração máxima de 5 minutos.
 - **Corpo de requisição** limitado a 32 KB (Kestrel e nginx).
 - **Retenção**: resultados com mais de 30 dias são apagados de hora em hora.
 
@@ -430,6 +486,7 @@ marcadas com **Admin** respondem `403` para Viewers.
 | `GET` | `/api-keys` | **Admin.** Lista as chaves (nome, prefixo, último uso; nunca a chave) |
 | `POST` | `/api-keys` | **Admin.** Cria (`name`). A resposta traz a chave completa, só desta vez |
 | `DELETE` | `/api-keys/{id}` | **Admin.** Revoga |
+| `GET` | `/events` | Canal ao vivo (Server-Sent Events): `ready`, `check`, `incident-opened`, `incident-resolved`, `deployment` e `ping`. `503` acima do limite de conexões |
 | `GET` | `/health` | Público (fora de `/api`). Liveness da própria API |
 
 Exemplos:
@@ -447,6 +504,13 @@ curl -b cookies.txt "http://localhost:8080/api/applications/{id}/checks?limit=20
 # → { "items": [...], "nextCursor": "MTM4..." }   passe ?cursor=... para a próxima página
 
 curl -b cookies.txt "http://localhost:8080/api/applications/{id}/stats?hours=24"
+
+# Canal ao vivo: -N desliga o buffer do curl para ver cada evento chegar
+curl -N -b cookies.txt http://localhost:8080/api/events
+# event: ready
+#
+# event: check
+# data: {"type":"CheckCompleted","applicationId":"...","status":"Up","latencyMs":42,...}
 
 # No pipeline de CI, com uma chave de API em vez do cookie:
 curl -X POST http://localhost:8080/api/applications/{id}/deployments \
@@ -504,6 +568,10 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Alerting:WebhookTimeoutSeconds` | `10` | Timeout de cada chamada ao webhook |
 | `Alerting:DashboardBaseUrl` | (vazio) | Se definido, a mensagem inclui um link para a aplicação |
 | `Deployments:CorrelationWindowMinutes` | `30` | Um incidente que começa até N minutos depois de um deploy aponta esse deploy como suspeito |
+| `Live:MaxConnections` | `100` | Conexões ao vivo simultâneas por instância |
+| `Live:HeartbeatSeconds` | `15` | Intervalo do `ping` quando não há eventos |
+| `Live:MaxStreamMinutes` | `5` | Duração máxima de uma conexão (o navegador reconecta e passa pelo login de novo) |
+| `Live:BufferPerConnection` | `100` | Eventos guardados para um cliente lento antes de descartar os mais antigos |
 
 ---
 
@@ -520,7 +588,7 @@ cd frontend
 npm run test:ci
 ```
 
-**Backend (95 testes)**
+**Backend (155 testes)**
 
 - Unidade: `IpAddressGuard` (faixas privadas, IPv6, IPv4 mapeado), `UrlSafetyPolicy` (esquemas,
   credenciais, portas, curingas, IP literal), `SafeSocketConnector` (DNS rebinding, inclusive com um
@@ -532,9 +600,13 @@ npm run test:ci
 - Alertas: todas as transições do `IncidentTracker`, backoff, formato das mensagens e do JSON de
   cada canal, ciclo de vida completo do incidente com o dispatcher, retentativas até desistir e o
   índice que impede dois incidentes abertos.
+- Tempo real: o `LiveEventHub` (entrega, limite de conexões, descarte dos eventos antigos), o fluxo
+  SSE com relógio falso (`ready`, evento, `ping`, fim por tempo máximo) e, na integração, um
+  cliente lendo `/api/events` de verdade enquanto o agendador roda, além de `401` e `503`.
 
-**Frontend (24 testes)**: serviço HTTP com `HttpTestingController`, dashboard (cards, resumo, estado
-vazio, erro de rede, escape de HTML, banner de incidentes), formulário (validação local e erros vindos da API), badge,
+**Frontend (52 testes)**: serviço HTTP com `HttpTestingController`, dashboard (cards, resumo, estado
+vazio, erro de rede, escape de HTML, banner de incidentes, avisos ao vivo), canal ao vivo com um
+`EventSource` falso (reconexão e conexão compartilhada), formulário (validação local e erros vindos da API), badge,
 gráfico e pipe de tempo relativo.
 
 **GitHub Actions** (`.github/workflows/ci.yml`) roda em todo push e PR: build e testes do backend com
@@ -557,13 +629,14 @@ backend/
     Alerting/         máquina de estados do incidente, outbox dispatcher, envio por webhook
     Auth/             login, JWT, política de senha, usuários, chaves de API
     Deployments/      registro de deploys, validação e correlação com incidentes
+    Live/             canal ao vivo: pub/sub em memória e endpoint Server-Sent Events
     Infrastructure/   rate limiting e cabeçalhos de segurança
     Program.cs        composição da aplicação (DI e pipeline HTTP)
   tests/DeployGuard.Tests/
     Unit/  Integration/  TestDoubles/
 frontend/
   src/app/
-    core/             modelos, cliente da API, Problem Details, sessão (AuthService), guards, interceptor
+    core/             modelos, cliente da API, canal ao vivo, Problem Details, sessão, guards, interceptor
     login/            tela de login
     users/            gestão de usuários (só Admin)
     api-keys/         chaves de API para o CI (só Admin)
@@ -582,9 +655,11 @@ docker-compose.yml
 - **Login corporativo (SSO/OIDC)** com Entra ID, Google ou Keycloak, e MFA.
 - **Troca de senha** pelo próprio usuário e bloqueio de conta após muitas falhas (hoje só há o
   rate limit por IP).
-- **Várias instâncias**: distribuir o agendamento (`FOR UPDATE SKIP LOCKED` ou worker separado).
+- **Várias instâncias**: distribuir o agendamento (`FOR UPDATE SKIP LOCKED` ou worker separado) e
+  compartilhar os avisos ao vivo (`LISTEN/NOTIFY` ou Redis).
+- **Limite de conexões ao vivo por usuário**: hoje o limite é global, então um usuário logado com
+  muitas abas poderia ocupar as vagas (os outros continuariam com a atualização de 1 minuto).
 - **Mais canais de alerta** (e-mail, SMS) e regras por aplicação (quem avisar, horário de plantão).
-- **Tempo real** no dashboard com Server-Sent Events.
 - **Particionamento** da tabela de resultados por data, se o volume crescer.
 - **Validação do corpo** da resposta (ex.: exigir `"status":"ok"`) com limite de bytes lidos.
 - Visão futura do produto: OpenTelemetry, AWS CloudWatch, correlação com deploys, investigação

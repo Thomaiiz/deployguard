@@ -3,6 +3,7 @@ using DeployGuard.Api.Auth;
 using DeployGuard.Api.Data;
 using DeployGuard.Api.Domain;
 using DeployGuard.Api.Infrastructure;
+using DeployGuard.Api.Live;
 using Microsoft.EntityFrameworkCore;
 
 namespace DeployGuard.Api.Deployments;
@@ -60,6 +61,7 @@ public static class DeploymentEndpoints
         CreateDeploymentRequest request,
         ClaimsPrincipal principal,
         DeployGuardDbContext db,
+        LiveEventHub liveEvents,
         TimeProvider time,
         CancellationToken ct)
     {
@@ -89,6 +91,7 @@ public static class DeploymentEndpoints
 
         db.Deployments.Add(deployment);
         await db.SaveChangesAsync(ct);
+        liveEvents.Publish(new LiveEvent(LiveEventType.DeploymentRegistered, id, deployment.DeployedAt, Version: deployment.Version));
 
         return Results.Created($"/api/applications/{id}/deployments", ToResponse(deployment, app.Name));
     }

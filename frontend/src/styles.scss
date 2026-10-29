@@ -104,6 +104,41 @@ a {
   margin: 0 auto;
   padding: 1.5rem 1rem 3rem;
 }
+/* Indicador do canal ao vivo no topo do dashboard */
+.live {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.live--on {
+  color: var(--up);
+  font-weight: 600;
+}
+
+.live__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live__dot {
+    animation: none;
+  }
+}
+
 .muted {
   color: var(--muted);
   margin: 0.25rem 0 0;

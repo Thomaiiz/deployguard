@@ -7,6 +7,7 @@ using DeployGuard.Api.Deployments;
 using DeployGuard.Api.History;
 using DeployGuard.Api.Incidents;
 using DeployGuard.Api.Infrastructure;
+using DeployGuard.Api.Live;
 using DeployGuard.Api.Monitoring;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +31,11 @@ builder.Services.AddAlerting(builder.Configuration);
 builder.Services.AddSingleton<ApplicationValidator>();
 builder.Services.AddApiRateLimiting(builder.Configuration);
 builder.Services.AddDeployGuardAuth(builder.Configuration);
+builder.Services.AddOptions<LiveOptions>()
+    .Bind(builder.Configuration.GetSection(LiveOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<LiveEventHub>();
 builder.Services.AddOptions<DeploymentOptions>()
     .Bind(builder.Configuration.GetSection(DeploymentOptions.SectionName))
     .ValidateDataAnnotations()
@@ -93,6 +99,7 @@ api.MapApplicationEndpoints();
 api.MapHistoryEndpoints();
 api.MapIncidentEndpoints();
 api.MapDeploymentEndpoints();
+api.MapLiveEndpoints();
 
 app.Run();
 

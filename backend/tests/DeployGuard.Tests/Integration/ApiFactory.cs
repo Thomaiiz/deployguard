@@ -151,3 +151,12 @@ public sealed class DeploymentApiFactory : ApiFactory
 {
     protected override int MaxApplications => 50;
 }
+
+public sealed class LiveApiFactory : ApiFactory
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.UseSetting("Live:MaxConnections", "2");
+    }
+}
