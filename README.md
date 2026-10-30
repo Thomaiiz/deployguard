@@ -108,7 +108,7 @@ rede interna do Compose.
 
 ### Opção 2: desenvolvimento local
 
-Pré-requisitos: .NET SDK 10, Node.js 24 e um PostgreSQL rodando.
+Pré-requisitos: .NET SDK 10, Node.js 24 ou 26 e um PostgreSQL rodando.
 
 ```bash
 # 1. Segredos fora do repositório (ficam no perfil do seu usuário)

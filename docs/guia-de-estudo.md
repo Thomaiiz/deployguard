@@ -699,6 +699,39 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
 - **NuGet Audit.** O `dotnet restore` compara os pacotes com a base de vulnerabilidades do GitHub.
   Com `TreatWarningsAsErrors`, uma dependência vulnerável quebra o build antes de chegar à produção.
 
+## Etapa 16: dependências em dia
+
+### O que mudou
+
+- Os 10 PRs abertos do Dependabot foram aplicados juntos num PR só e validados de uma vez:
+  actions do GitHub (`checkout@v7`, `setup-node@v7`, `setup-dotnet@v6`, `upload-artifact@v7`),
+  Node 26 no build do frontend, nginx 1.31, pacotes de teste do .NET (xUnit runner 4,
+  Test SDK 18, coverlet 10) e correções do Angular 22.2.4.
+- O **TypeScript 7 ficou de fora**: o `@angular/build` 22 exige `typescript >=6.0 <6.1` (dependência
+  "peer"), e o `npm ci` recusa a instalação com `ERESOLVE`. O `dependabot.yml` agora ignora saltos de
+  versão do TypeScript, que sobe junto com o Angular pelo `ng update`.
+- O Dependabot passou a agrupar as actions e os pacotes de teste, para abrir menos PRs.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `npm outdated` | Lista os pacotes com versão mais nova disponível (atual, desejada pela faixa do `package.json` e a mais recente). |
+| `npm update` | Atualiza dentro das faixas do `package.json` (ex.: `^22.2.3` aceita `22.2.4`), mexendo só no `package-lock.json`. |
+| `dotnet list package --outdated` | O mesmo para os pacotes NuGet. |
+| `docker run --rm -v $PWD:/app -w /app node:26-bookworm-slim npx ng build` | Testa o build numa versão do Node que não está instalada na máquina, usando um container descartável. |
+
+### Conceitos
+
+- **Peer dependency.** Um pacote declara "funciono com a versão X de outro pacote, que você instala".
+  O Angular fixa a faixa do TypeScript porque o compilador dele usa a API interna do TypeScript.
+- **Por que juntar os PRs?** Dez PRs separados significam dez rodadas de CI e dez merges, e um pode
+  quebrar o outro. Num PR só, o CI valida a combinação que vai de fato para a `main`. Depois do merge,
+  o Dependabot fecha sozinho os PRs que ficaram sem efeito.
+- **Versão major de action.** `actions/checkout@v7` é uma tag que acompanha correções da v7. Em
+  projetos mais rígidos, fixa-se o SHA do commit (proteção contra uma tag ser trocada por código
+  malicioso).
+
 ## Etapa 17: rate limit global com Redis
 
 ### O que mudou
