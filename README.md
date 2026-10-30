@@ -107,6 +107,21 @@ nenhuma mensagem é enviada.
 Só o dashboard é publicado, e apenas em `127.0.0.1:8080`. API e banco ficam acessíveis só pela
 rede interna do Compose.
 
+#### Antes de expor fora da sua máquina
+
+O Compose foi feito para rodar localmente. Para colocar o DeployGuard num servidor acessível pela
+rede, falta:
+
+1. **HTTPS na frente do nginx** (um proxy reverso como Caddy, Traefik ou o load balancer da nuvem,
+   com certificado). O cookie de login é `Secure`: sem HTTPS, os navegadores só o aceitam em
+   `localhost`, então o login simplesmente não funciona por http em outro endereço.
+2. **Um SMTP de verdade**: preencha `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+   e `SMTP_SECURITY=StartTls` (porta 587) ou `SslOnConnect` (porta 465). Sem isso, os e-mails de
+   "esqueci minha senha" ficam no Mailpit. A API **não sobe** com `SMTP_SECURITY=None` apontando
+   para um servidor de verdade: a senha do SMTP e o link de reset viajariam sem criptografia.
+3. **`DASHBOARD_URL`** com o endereço público (`https://...`), usado no link do e-mail.
+4. Trocar a porta publicada `127.0.0.1:8080` pelo endereço do proxy com TLS e remover o Mailpit.
+
 ### Opção 2: desenvolvimento local
 
 Pré-requisitos: .NET SDK 10, Node.js 24 ou 26 e um PostgreSQL rodando.
@@ -346,6 +361,11 @@ sequenceDiagram
   zerado, e as duas pontas ficam na auditoria.
 - **E-mail só texto**, sem HTML montado com dados. Em produção, use um SMTP com TLS
   (`Email:Security=StartTls`) e usuário/senha vindos de segredos.
+- **TLS obrigatório fora do teste.** A API não sobe com `Email:Security` em `None`, `Auto` ou
+  `StartTlsWhenAvailable` (as duas últimas aceitam continuar sem criptografia se alguém no meio do
+  caminho "esconder" o STARTTLS) quando o servidor é de verdade ou quando há usuário e senha. Sem TLS
+  só vale para um servidor local de teste: `localhost`, loopback ou um nome sem ponto, como o
+  `mailpit` do Compose.
 
 ### Página de status pública
 
@@ -727,7 +747,7 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `PasswordReset:TokenLifetimeMinutes` | `30` | Validade do link |
 | `PasswordReset:MaxRequestsPerHour` | `3` | Pedidos por usuário por hora |
 | `Email:SmtpHost` / `SmtpPort` | (vazio) / `587` | Servidor SMTP. Vazio = e-mails descartados (com aviso no log) |
-| `Email:Security` | `StartTls` | `StartTls`, `SslOnConnect` ou `None` (só para servidor local, como o Mailpit) |
+| `Email:Security` | `StartTls` | `StartTls` ou `SslOnConnect`. `None` só para servidor local de teste, sem usuário (como o Mailpit); fora disso a API não sobe |
 | `Email:Username` / `Password` | (vazio, segredo) | Credenciais do SMTP |
 | `Email:FromAddress` / `FromName` | `deployguard@localhost` / `DeployGuard` | Remetente |
 | `RateLimiting:Redis` | (vazio) | Conexão do Redis para o rate limit global (ex.: `redis:6379,password=...`). Vazio = cada réplica conta sozinha |
