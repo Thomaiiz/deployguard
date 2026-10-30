@@ -288,6 +288,31 @@ namespace DeployGuard.Api.Data.Migrations
                     b.ToTable("incidents", (string)null);
                 });
 
+            modelBuilder.Entity("DeployGuard.Api.Domain.LoginFailure", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("FailedCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("LockoutEnd")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId", "IpAddress");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("login_failures", (string)null);
+                });
+
             modelBuilder.Entity("DeployGuard.Api.Domain.MonitoredApplication", b =>
                 {
                     b.Property<Guid>("Id")
@@ -450,6 +475,15 @@ namespace DeployGuard.Api.Data.Migrations
                     b.HasOne("DeployGuard.Api.Domain.MonitoredApplication", null)
                         .WithMany()
                         .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DeployGuard.Api.Domain.LoginFailure", b =>
+                {
+                    b.HasOne("DeployGuard.Api.Domain.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

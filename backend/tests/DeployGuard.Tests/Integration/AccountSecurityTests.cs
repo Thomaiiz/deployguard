@@ -29,9 +29,14 @@ public class AccountSecurityTests(AccountSecurityApiFactory factory) : IClassFix
     }
 
     /// <summary>Um "navegador" novo: guarda o cookie que o login devolver.</summary>
-    private async Task<(HttpClient Client, HttpResponseMessage Response)> LoginAsync(string email, string password)
+    private async Task<(HttpClient Client, HttpResponseMessage Response)> LoginAsync(string email, string password, string? fromIp = null)
     {
         var client = factory.CreateClient();
+        if (fromIp is not null)
+        {
+            client.DefaultRequestHeaders.Add(TestClientIpStartupFilter.Header, fromIp);
+        }
+
         var response = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest(email, password));
         return (client, response);
     }
@@ -65,6 +70,62 @@ public class AccountSecurityTests(AccountSecurityApiFactory factory) : IClassFix
         var (_, afterUnlock) = await LoginAsync(user.Email, Password);
         Assert.Equal(HttpStatusCode.OK, afterUnlock.StatusCode);
         Assert.Contains(await AuditAsync(AuditAction.UserUnlocked), e => e.TargetId == user.Id.ToString());
+    }
+
+    [Fact]
+    public async Task Wrong_passwords_from_one_ip_do_not_lock_the_owner_out_from_another()
+    {
+        var user = await CreateUserAsync("dono@example.com");
+
+        // Um atacante erra a senha 5 vezes do IP dele: esse IP fica bloqueado nesta conta.
+        for (var i = 0; i < 5; i++)
+        {
+            var (_, wrong) = await LoginAsync(user.Email, "senha-errada-123456", fromIp: "203.0.113.10");
+            Assert.Equal(HttpStatusCode.Unauthorized, wrong.StatusCode);
+        }
+
+        var (_, attackerWithRightPassword) = await LoginAsync(user.Email, Password, fromIp: "203.0.113.10");
+        Assert.Equal(HttpStatusCode.Unauthorized, attackerWithRightPassword.StatusCode);
+
+        // O dono, de outro IP, continua entrando.
+        var (_, owner) = await LoginAsync(user.Email, Password, fromIp: "198.51.100.20");
+        Assert.Equal(HttpStatusCode.OK, owner.StatusCode);
+
+        var locked = await AuditAsync(AuditAction.AccountLocked);
+        Assert.Contains(locked, e => e.TargetId == user.Id.ToString() && e.Details!.Contains("203.0.113.10"));
+    }
+
+    [Fact]
+    public async Task An_attack_spread_over_many_ips_still_locks_the_whole_account()
+    {
+        var user = await CreateUserAsync("espalhado@example.com");
+
+        // 10 erradas no total (o teto desta factory), sem nenhum IP chegar a 5.
+        for (var i = 0; i < AccountSecurityApiFactory.MaxFailedLoginsPerAccount; i++)
+        {
+            await LoginAsync(user.Email, "senha-errada-123456", fromIp: $"203.0.113.{i % 4 + 1}");
+        }
+
+        var (_, fromNewIp) = await LoginAsync(user.Email, Password, fromIp: "198.51.100.30");
+        Assert.Equal(HttpStatusCode.Unauthorized, fromNewIp.StatusCode);
+
+        var listed = (await _admin.GetFromJsonAsync<UserResponse[]>("/api/users", Json))!.Single(u => u.Id == user.Id);
+        Assert.NotNull(listed.LockedUntil);
+    }
+
+    [Fact]
+    public async Task Admin_unlock_also_frees_the_blocked_ips()
+    {
+        var user = await CreateUserAsync("libera-ip@example.com");
+        for (var i = 0; i < 5; i++)
+        {
+            await LoginAsync(user.Email, "senha-errada-123456", fromIp: "203.0.113.50");
+        }
+
+        Assert.Equal(HttpStatusCode.NoContent, (await _admin.PostAsync($"/api/users/{user.Id}/unlock", null)).StatusCode);
+
+        var (_, response) = await LoginAsync(user.Email, Password, fromIp: "203.0.113.50");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]

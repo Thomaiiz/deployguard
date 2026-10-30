@@ -190,6 +190,7 @@ public static class PasswordResetEndpoints
         // Quem provou ter acesso ao e-mail não precisa esperar o fim de um bloqueio.
         user.FailedLoginCount = 0;
         user.LockoutEnd = null;
+        await db.LoginFailures.Where(f => f.UserId == user.Id).ExecuteDeleteAsync(ct);
         Audit.Record(db, http, AuditAction.PasswordResetCompleted, "user", user.Id.ToString(), actor: user);
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);

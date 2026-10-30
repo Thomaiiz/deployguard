@@ -168,8 +168,20 @@ public class PasswordResetTests(PasswordResetApiFactory factory) : IClassFixture
     public async Task Resetting_unlocks_a_locked_account()
     {
         var user = await CreateUserAsync("bloqueado-reset@example.com");
-        await factory.WithDbAsync(db => db.Users.Where(u => u.Id == user.Id)
-            .ExecuteUpdateAsync(s => s.SetProperty(u => u.LockoutEnd, DateTimeOffset.UtcNow.AddMinutes(10))));
+        await factory.WithDbAsync(async db =>
+        {
+            await db.Users.Where(u => u.Id == user.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.LockoutEnd, DateTimeOffset.UtcNow.AddMinutes(10)));
+            // Bloqueio só do IP de onde o teste faz login (o TestServer não tem IP: "unknown").
+            db.LoginFailures.Add(new LoginFailure
+            {
+                UserId = user.Id,
+                IpAddress = "unknown",
+                LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(10),
+                UpdatedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+        });
 
         var token = await RequestTokenAsync(user.Email);
         Assert.Equal(HttpStatusCode.NoContent, (await ResetAsync(token)).StatusCode);

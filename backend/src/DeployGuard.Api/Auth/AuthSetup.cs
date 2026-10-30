@@ -24,6 +24,8 @@ public static class AuthSetup
         services.AddOptions<AuthOptions>()
             .Bind(configuration.GetSection(AuthOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(o => o.MaxFailedLoginsPerAccount > o.MaxFailedLogins,
+                "Auth:MaxFailedLoginsPerAccount deve ser maior que Auth:MaxFailedLogins.")
             .ValidateOnStart(); // sem chave de assinatura válida a API não sobe
 
         services.AddSingleton<TokenService>();

@@ -769,6 +769,42 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
 - **Senha mesmo na rede interna.** Defesa em profundidade: se outro container da rede for
   comprometido, ainda precisa da senha.
 
+## Etapa 18: bloqueio por conta e IP (correção da auditoria)
+
+### O que mudou
+
+- A auditoria de segurança achou o **SEC-001**: o bloqueio depois de 5 senhas erradas era da conta
+  inteira. Quem soubesse o e-mail do Admin errava a senha 5 vezes a cada 15 minutos e o deixava
+  trancado para sempre, sem precisar de login nenhum.
+- Tabela nova `login_failures`, com uma linha por par (conta, IP): 5 erradas do mesmo IP bloqueiam
+  só esse IP nessa conta.
+- O bloqueio da conta inteira continua existindo, mas com um teto bem mais alto
+  (`Auth:MaxFailedLoginsPerAccount`, padrão 50), para frear ataques espalhados por muitos IPs.
+- O desbloqueio pelo Admin e o reset de senha liberam também os IPs. O agendador apaga registros com
+  mais de um dia.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `dotnet ef migrations add AddLoginFailuresPerIp` | Gera a migration que cria a tabela nova a partir das mudanças no `DbContext`. |
+| `git stash push -u -- backend/src` | Guarda as mudanças de lado. Serviu para rodar o teste novo no código antigo e ver ele falhar. |
+| `git stash pop` | Traz as mudanças de volta. |
+
+### Conceitos
+
+- **Upsert (`INSERT ... ON CONFLICT DO UPDATE`).** Cria a linha na primeira falha e soma nas
+  seguintes, num único comando. Duas requisições ao mesmo tempo não criam linhas duplicadas nem
+  perdem contagem, porque o PostgreSQL resolve o conflito na chave primária (conta, IP).
+- **`RETURNING`.** Faz o próprio `INSERT/UPDATE` devolver um valor (aqui: "ficou bloqueado?"), sem
+  uma segunda consulta.
+- **Por que não só por IP?** Um atacante com muitos IPs (uma botnet) poderia testar 4 senhas de cada
+  um, sem nunca bloquear. O teto por conta fecha essa porta.
+- **Teste de regressão.** Primeiro o teste foi rodado no código antigo e falhou (prova que ele pega
+  o problema), depois no código novo e passou.
+- **Simular IP nos testes.** O servidor de teste não tem IP de cliente. Um `IStartupFilter` só dos
+  testes lê o cabeçalho `X-Test-Client-Ip` e define o IP da requisição.
+
 ---
 
 ## Perguntas de entrevista
@@ -926,3 +962,8 @@ sessões.
 O contador fica no Redis: um script Lua faz INCR e define a expiração atomicamente, então todas as
 réplicas somam no mesmo lugar. Se o Redis cair, cada réplica volta ao limitador em memória e a API
 continua no ar.
+
+**Como você evitou que o bloqueio de conta virasse um ataque de negação de serviço?**
+O bloqueio é por par conta e IP: quem erra a senha de propósito tranca só o próprio IP, e o dono
+entra de outro lugar. Para ataques espalhados por muitos IPs existe um teto por conta bem mais alto.
+Os contadores sobem com um upsert atômico, e o bloqueio é temporário.

@@ -245,5 +245,8 @@ public sealed class HealthCheckScheduler(
         {
             logger.LogInformation("Retenção: {Count} resultados antigos removidos.", removed);
         }
+
+        // Tentativas erradas de login com mais de um dia já não bloqueiam nada.
+        await db.LoginFailures.Where(f => f.UpdatedAt < now.AddDays(-1)).ExecuteDeleteAsync(ct);
     }
 }

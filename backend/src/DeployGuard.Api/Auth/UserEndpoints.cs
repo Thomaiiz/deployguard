@@ -13,8 +13,17 @@ public sealed record UserResponse(
     Guid Id, string Email, UserRole Role, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt, DateTimeOffset? LockedUntil)
 {
     // Nunca devolvemos o hash da senha, nem para administradores.
-    public static UserResponse From(User u, DateTimeOffset now) =>
-        new(u.Id, u.Email, u.Role, u.CreatedAt, u.LastLoginAt, u.IsLockedOut(now) ? u.LockoutEnd : null);
+    // LockedUntil: o fim do bloqueio mais longo, seja da conta inteira ou de algum IP nela.
+    public static UserResponse From(User u, DateTimeOffset now, DateTimeOffset? ipLockedUntil = null)
+    {
+        var lockedUntil = u.IsLockedOut(now) ? u.LockoutEnd : null;
+        if (ipLockedUntil > now && !(lockedUntil >= ipLockedUntil))
+        {
+            lockedUntil = ipLockedUntil;
+        }
+
+        return new(u.Id, u.Email, u.Role, u.CreatedAt, u.LastLoginAt, lockedUntil);
+    }
 }
 
 public static class UserEndpoints
@@ -37,7 +46,12 @@ public static class UserEndpoints
     {
         var now = time.GetUtcNow();
         var users = await db.Users.AsNoTracking().OrderBy(u => u.Email).ToListAsync(ct);
-        return Results.Ok(users.Select(u => UserResponse.From(u, now)));
+        var ipLocks = await db.LoginFailures.AsNoTracking()
+            .Where(f => f.LockoutEnd > now)
+            .GroupBy(f => f.UserId)
+            .Select(g => new { UserId = g.Key, Until = g.Max(f => f.LockoutEnd) })
+            .ToDictionaryAsync(x => x.UserId, x => x.Until, ct);
+        return Results.Ok(users.Select(u => UserResponse.From(u, now, ipLocks.GetValueOrDefault(u.Id))));
     }
 
     private static async Task<IResult> CreateAsync(
@@ -115,6 +129,8 @@ public static class UserEndpoints
 
         user.FailedLoginCount = 0;
         user.LockoutEnd = null;
+        // Libera também os IPs bloqueados nesta conta.
+        await db.LoginFailures.Where(f => f.UserId == user.Id).ExecuteDeleteAsync(ct);
         Audit.Record(db, http, AuditAction.UserUnlocked, "user", user.Id.ToString(), user.Email);
         await db.SaveChangesAsync(ct);
         return Results.NoContent();

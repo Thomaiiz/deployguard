@@ -59,12 +59,23 @@ public static class AuthEndpoints
             title: "E-mail ou senha inválidos.",
             detail: $"Depois de {settings.MaxFailedLogins} tentativas erradas seguidas, a conta fica bloqueada por {settings.LockoutMinutes} minutos.");
 
-        if (user is not null && user.IsLockedOut(now))
+        var ip = ClientIp(http);
+
+        if (user is not null)
         {
-            // Durante o bloqueio, nem a senha certa entra, e as tentativas não estendem o bloqueio.
-            Audit.Record(db, http, AuditAction.LoginFailed, "user", user.Id.ToString(), "Conta bloqueada.", actor: user);
-            await db.SaveChangesAsync(ct);
-            return Invalid();
+            // Bloqueio por conta (teto somando todos os IPs) ou só deste IP nesta conta. Durante o
+            // bloqueio, nem a senha certa entra, e as tentativas não estendem o bloqueio.
+            var lockedFor = user.IsLockedOut(now)
+                ? "Conta bloqueada."
+                : await db.LoginFailures.AnyAsync(f => f.UserId == user.Id && f.IpAddress == ip && f.LockoutEnd > now, ct)
+                    ? "Conta bloqueada para este IP."
+                    : null;
+            if (lockedFor is not null)
+            {
+                Audit.Record(db, http, AuditAction.LoginFailed, "user", user.Id.ToString(), lockedFor, actor: user);
+                await db.SaveChangesAsync(ct);
+                return Invalid();
+            }
         }
 
         if (user is null || result == PasswordVerificationResult.Failed)
@@ -73,15 +84,20 @@ public static class AuthEndpoints
             {
                 Audit.Record(db, http, AuditAction.LoginFailed, details: "E-mail não cadastrado.", actorEmail: email);
             }
-            else if (await RegisterFailureAsync(db, user.Id, settings, now, ct))
-            {
-                Audit.Record(db, http, AuditAction.LoginFailed, "user", user.Id.ToString(), "Senha incorreta.", actor: user);
-                Audit.Record(db, http, AuditAction.AccountLocked, "user", user.Id.ToString(),
-                    $"{settings.MaxFailedLogins} tentativas erradas. Bloqueada por {settings.LockoutMinutes} min.", actor: user);
-            }
             else
             {
                 Audit.Record(db, http, AuditAction.LoginFailed, "user", user.Id.ToString(), "Senha incorreta.", actor: user);
+                var (ipLocked, accountLocked) = await RegisterFailureAsync(db, user.Id, ip, settings, now, ct);
+                if (accountLocked)
+                {
+                    Audit.Record(db, http, AuditAction.AccountLocked, "user", user.Id.ToString(),
+                        $"{settings.MaxFailedLoginsPerAccount} tentativas erradas somando todos os IPs. Conta bloqueada por {settings.LockoutMinutes} min.", actor: user);
+                }
+                else if (ipLocked)
+                {
+                    Audit.Record(db, http, AuditAction.AccountLocked, "user", user.Id.ToString(),
+                        $"{settings.MaxFailedLogins} tentativas erradas do IP {ip}. Bloqueada para esse IP por {settings.LockoutMinutes} min.", actor: user);
+                }
             }
 
             await db.SaveChangesAsync(ct);
@@ -97,6 +113,7 @@ public static class AuthEndpoints
         user.LastLoginAt = now;
         user.FailedLoginCount = 0;
         user.LockoutEnd = null;
+        await db.LoginFailures.Where(f => f.UserId == user.Id && f.IpAddress == ip).ExecuteDeleteAsync(ct);
         Audit.Record(db, http, AuditAction.LoginSucceeded, "user", user.Id.ToString(), actor: user);
         await db.SaveChangesAsync(ct);
 
@@ -107,23 +124,46 @@ public static class AuthEndpoints
     }
 
     /// <summary>
-    /// Conta a tentativa errada num único UPDATE atômico. Com várias instâncias da API, duas
-    /// tentativas simultâneas não "se perdem" (ler, somar e gravar em passos separados perderia).
-    /// Ao chegar no limite, bloqueia e zera o contador. Devolve true se bloqueou agora.
+    /// Conta a tentativa errada em dois contadores, cada um num único comando atômico. Com várias
+    /// instâncias da API, tentativas simultâneas não "se perdem" (ler, somar e gravar em passos
+    /// separados perderia). Ao chegar no limite, bloqueia e zera o contador.
+    /// 1. Do par (conta, IP): bloqueia só esse IP. Quem erra de propósito não tranca o dono.
+    /// 2. Da conta, somando todos os IPs, com um teto bem mais alto: freia ataques espalhados.
+    /// Devolve se cada um dos dois bloqueou agora.
     /// </summary>
-    private static async Task<bool> RegisterFailureAsync(
-        DeployGuardDbContext db, Guid userId, AuthOptions settings, DateTimeOffset now, CancellationToken ct)
+    private static async Task<(bool IpLocked, bool AccountLocked)> RegisterFailureAsync(
+        DeployGuardDbContext db, Guid userId, string ip, AuthOptions settings, DateTimeOffset now, CancellationToken ct)
     {
-        var max = settings.MaxFailedLogins;
         DateTimeOffset? lockUntil = now.AddMinutes(settings.LockoutMinutes);
 
-        // No SQL, os dois SET leem o valor ANTIGO de FailedLoginCount.
-        await db.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(s => s
-            .SetProperty(u => u.LockoutEnd, u => u.FailedLoginCount + 1 >= max ? lockUntil : u.LockoutEnd)
-            .SetProperty(u => u.FailedLoginCount, u => u.FailedLoginCount + 1 >= max ? 0 : u.FailedLoginCount + 1), ct);
+        // INSERT ... ON CONFLICT ("upsert"): cria a linha do par na primeira falha e soma nas
+        // seguintes, sem corrida entre duas requisições. No SET, "login_failures" é o valor antigo.
+        var maxPerIp = settings.MaxFailedLogins;
+        var ipLocked = (await db.Database.SqlQuery<bool>($"""
+            INSERT INTO login_failures ("UserId", "IpAddress", "FailedCount", "LockoutEnd", "UpdatedAt")
+            VALUES ({userId}, {ip}, 1, NULL, {now})
+            ON CONFLICT ("UserId", "IpAddress") DO UPDATE SET
+                "LockoutEnd" = CASE WHEN login_failures."FailedCount" + 1 >= {maxPerIp} THEN {lockUntil} ELSE login_failures."LockoutEnd" END,
+                "FailedCount" = CASE WHEN login_failures."FailedCount" + 1 >= {maxPerIp} THEN 0 ELSE login_failures."FailedCount" + 1 END,
+                "UpdatedAt" = {now}
+            RETURNING coalesce("LockoutEnd" > {now}, false) AS "Value"
+            """).ToListAsync(ct)).Single();
 
-        return await db.Users.Where(u => u.Id == userId).Select(u => u.LockoutEnd > now).FirstAsync(ct);
+        // No SQL, os dois SET leem o valor ANTIGO de FailedLoginCount.
+        var maxPerAccount = settings.MaxFailedLoginsPerAccount;
+        await db.Users.Where(u => u.Id == userId).ExecuteUpdateAsync(s => s
+            .SetProperty(u => u.LockoutEnd, u => u.FailedLoginCount + 1 >= maxPerAccount ? lockUntil : u.LockoutEnd)
+            .SetProperty(u => u.FailedLoginCount, u => u.FailedLoginCount + 1 >= maxPerAccount ? 0 : u.FailedLoginCount + 1), ct);
+        var accountLocked = await db.Users.Where(u => u.Id == userId).Select(u => u.LockoutEnd > now).FirstAsync(ct);
+
+        return (ipLocked, accountLocked);
     }
+
+    /// <summary>
+    /// IP real do cliente: o UseForwardedHeaders já trocou o IP do nginx pelo do X-Forwarded-For,
+    /// e só confia nesse cabeçalho quando ele vem do proxy conhecido.
+    /// </summary>
+    private static string ClientIp(HttpContext http) => http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     private static async Task<IResult> ChangePasswordAsync(
         ChangePasswordRequest request,

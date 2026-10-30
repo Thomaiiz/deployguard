@@ -5,7 +5,10 @@ using DeployGuard.Api.Domain;
 using DeployGuard.Api.Email;
 using DeployGuard.Api.Monitoring;
 using DeployGuard.Tests.TestDoubles;
+using System.Net;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -103,6 +106,7 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             services.AddSingleton<IAlertSender>(AlertSender);
             services.RemoveAll<IEmailSender>();
             services.AddSingleton<IEmailSender>(EmailSender);
+            services.AddSingleton<IStartupFilter, TestClientIpStartupFilter>();
         });
     }
 
@@ -192,7 +196,40 @@ public sealed class MultiInstanceApiFactory : ApiFactory
     }
 }
 
-public sealed class AccountSecurityApiFactory : ApiFactory;
+/// <summary>
+/// O TestServer não tem IP de cliente (RemoteIpAddress fica nulo). Com o cabeçalho
+/// <see cref="Header"/>, cada teste simula de qual IP vem a requisição.
+/// </summary>
+public sealed class TestClientIpStartupFilter : IStartupFilter
+{
+    public const string Header = "X-Test-Client-Ip";
+
+    public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+    {
+        app.Use((context, nextMiddleware) =>
+        {
+            if (IPAddress.TryParse(context.Request.Headers[Header], out var ip))
+            {
+                context.Connection.RemoteIpAddress = ip;
+            }
+
+            return nextMiddleware(context);
+        });
+        next(app);
+    };
+}
+
+/// <summary>Teto por conta baixo (10), para o teste de ataque espalhado por vários IPs.</summary>
+public sealed class AccountSecurityApiFactory : ApiFactory
+{
+    public const int MaxFailedLoginsPerAccount = 10;
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.UseSetting("Auth:MaxFailedLoginsPerAccount", MaxFailedLoginsPerAccount.ToString());
+    }
+}
 
 public sealed class PasswordResetApiFactory : ApiFactory;
 

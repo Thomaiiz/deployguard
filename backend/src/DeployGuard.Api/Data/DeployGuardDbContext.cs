@@ -23,6 +23,8 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
 
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
 
+    public DbSet<LoginFailure> LoginFailures => Set<LoginFailure>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(user =>
@@ -58,6 +60,16 @@ public sealed class DeployGuardDbContext(DbContextOptions<DeployGuardDbContext> 
 
             // Usuário removido leva junto os pedidos pendentes.
             reset.HasOne<User>().WithMany().HasForeignKey(r => r.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<LoginFailure>(failure =>
+        {
+            failure.ToTable("login_failures");
+            // Uma linha por par (conta, IP): o INSERT ... ON CONFLICT do login depende dessa chave.
+            failure.HasKey(f => new { f.UserId, f.IpAddress });
+            failure.Property(f => f.IpAddress).HasMaxLength(64);
+            failure.HasIndex(f => f.UpdatedAt); // faxina dos registros antigos
+            failure.HasOne<User>().WithMany().HasForeignKey(f => f.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Deployment>(deployment =>
