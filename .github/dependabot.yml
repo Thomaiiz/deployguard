@@ -1,18 +1,30 @@
 # Dependabot abre PRs semanais atualizando dependências (inclusive correções de segurança).
+# Grupos juntam atualizações parecidas num PR só, para não lotar a lista de PRs.
 version: 2
 updates:
   - package-ecosystem: nuget
     directory: /backend
     schedule: { interval: weekly }
+    groups:
+      testes:
+        patterns: ["xunit*", "coverlet.*", "Microsoft.NET.Test.Sdk", "Testcontainers*", "Microsoft.AspNetCore.Mvc.Testing"]
   - package-ecosystem: npm
     directory: /frontend
     schedule: { interval: weekly }
     groups:
       angular:
         patterns: ["@angular/*", "@angular-devkit/*"]
+    ignore:
+      # O compilador do Angular aceita uma faixa fixa de TypeScript (o Angular 22 aceita só a
+      # 6.0.x). A versão do TypeScript sobe junto com o Angular, pelo "ng update", e não sozinha.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /backend
     schedule: { interval: weekly }
