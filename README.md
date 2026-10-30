@@ -30,6 +30,9 @@ Funcionalidades atuais:
   em 30 minutos. A resposta não revela se o e-mail existe, o banco guarda só o hash do token, e
   redefinir a senha derruba todas as sessões. No Compose, os e-mails caem no **Mailpit**
   (`http://localhost:8025`).
+- **Etapa 10:** **rate limit global com Redis**. As réplicas da API contam as requisições juntas,
+  então o limite vale para o sistema todo, e não por réplica. Se o Redis cair, cada réplica volta a
+  contar sozinha e a API continua no ar.
 
 | Camada | Tecnologia |
 |---|---|
@@ -37,7 +40,7 @@ Funcionalidades atuais:
 | Banco | PostgreSQL 17 (Npgsql) |
 | Dashboard | Angular 22 (standalone components, signals, zoneless) |
 | Testes | xUnit, WebApplicationFactory, Testcontainers, Vitest |
-| Infra | Docker Compose, nginx, GitHub Actions, Dependabot |
+| Infra | Docker Compose, nginx, Redis (rate limit), GitHub Actions, Dependabot |
 
 > Fora do escopo por enquanto (visão futura): AWS CloudWatch, OpenTelemetry, investigação
 > assistida por IA e integração com Azure.
@@ -522,7 +525,11 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
 ### 4. Limites
 
 - **Rate limiting por IP** (janela fixa): 120 leituras/min, 20 escritas/min e 30/min na página
-  de status pública. Acima disso, `429` com `Retry-After`.
+  de status pública. Acima disso, `429` com `Retry-After`. Com `RateLimiting:Redis` (padrão no
+  Compose), o contador fica no Redis e vale para todas as réplicas juntas: um `INCR` atômico num
+  script Lua, com a chave expirando no fim da janela. Se o Redis não responder, cada réplica usa o
+  limitador em memória dela (o limite continua existindo, só que por réplica) e registra um aviso no
+  log, no máximo um por minuto.
 - **X-Forwarded-For só é confiado vindo do nginx** (`ReverseProxy:KnownNetworks`), e o nginx
   sobrescreve o cabeçalho. Um cliente não consegue trocar de IP para fugir do limite.
 - **Máximo de aplicações** (`MaxApplications`, padrão 100) e **intervalo mínimo** de 30 s: cada
@@ -716,6 +723,7 @@ Tudo pode vir do `appsettings.json` ou de variáveis de ambiente (`:` vira `__`,
 | `Email:Security` | `StartTls` | `StartTls`, `SslOnConnect` ou `None` (só para servidor local, como o Mailpit) |
 | `Email:Username` / `Password` | (vazio, segredo) | Credenciais do SMTP |
 | `Email:FromAddress` / `FromName` | `deployguard@localhost` / `DeployGuard` | Remetente |
+| `RateLimiting:Redis` | (vazio) | Conexão do Redis para o rate limit global (ex.: `redis:6379,password=...`). Vazio = cada réplica conta sozinha |
 | `StatusPage:Title` | `Status dos serviços` | Título da página pública |
 | `StatusPage:HistoryDays` | `90` | Dias de histórico (limitado pela retenção) |
 | `StatusPage:CacheSeconds` | `30` | Cache da resposta pública (0 desliga) |
@@ -840,9 +848,8 @@ docker-compose.yml
   justamente o que evitamos.
 - **Retenção da auditoria**: os registros crescem sem limite. Em produção, guardar por um prazo
   definido (ex.: 1 ano) e exportar para um sistema de logs (SIEM).
-- **Limites por instância**: o rate limit e o limite de conexões ao vivo ficam na memória de cada
-  réplica, então com duas réplicas o teto efetivo dobra. Um limite global exigiria um contador
-  compartilhado (Redis, por exemplo).
+- **Conexões ao vivo por instância**: o limite de conexões SSE ainda fica na memória de cada réplica
+  (o rate limit já é global, pelo Redis).
 - **Limite de conexões ao vivo por usuário**: hoje o limite é por instância, então um usuário logado
   com muitas abas poderia ocupar as vagas (os outros continuariam com a atualização de 1 minuto).
 - **nginx resolve o endereço das réplicas ao iniciar.** Se uma réplica for recriada com outro IP, é

@@ -732,6 +732,43 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
   projetos mais rígidos, fixa-se o SHA do commit (proteção contra uma tag ser trocada por código
   malicioso).
 
+## Etapa 17: rate limit global com Redis
+
+### O que mudou
+
+- Serviço `redis` no Docker Compose, com senha (`REDIS_PASSWORD`), sem porta exposta e sem disco.
+- `Infrastructure/RedisRateLimiter.cs`: um `RateLimiter` do .NET que conta no Redis, com o limitador
+  em memória de reserva.
+- As quatro políticas (leitura, escrita, login e página pública) passam a usar o Redis quando
+  `RateLimiting:Redis` está configurado.
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `docker compose exec redis sh -c 'REDISCLI_AUTH=$REDIS_PASSWORD redis-cli --scan --pattern "deployguard:*"'` | Lista os contadores. Cada chave é `deployguard:ratelimit:<política>:<ip>`. |
+| `redis-cli GET <chave>` / `redis-cli TTL <chave>` | Mostra quantas requisições o IP fez na janela e quantos segundos faltam para zerar. |
+| `docker compose stop redis` | Simula o Redis caindo. A API continua respondendo, com um aviso no log. |
+
+### Conceitos
+
+- **Por que global?** Com 2 réplicas atrás do nginx, cada uma contava sozinha: o limite de 5
+  logins por minuto virava 10. Com o contador no Redis, as duas somam no mesmo lugar.
+- **INCR atômico com Lua.** O script soma 1 e, na primeira requisição da janela, define a expiração,
+  tudo numa operação só. Se fossem dois comandos separados, uma queda entre eles deixaria uma chave
+  sem prazo (o IP ficaria bloqueado para sempre). O script também corrige uma chave sem prazo, se
+  existir.
+- **Fail-open para o local, não para "sem limite".** Se o Redis cair, a API não para (o login não
+  depende do Redis) e também não fica sem freio: cada réplica volta a usar o contador em memória.
+- **Fail fast.** Desconectado, o cliente do Redis falha na hora (`BacklogPolicy.FailFast`) em vez de
+  esperar o timeout. No teste, a resposta continuou em ~1 ms com o Redis desligado.
+- **Timeouts curtos (500 ms).** Um Redis lento não pode segurar todas as requisições da API.
+- **Por que Redis e não o PostgreSQL?** Daria para contar no banco, mas cada requisição viraria uma
+  escrita no PostgreSQL. O Redis guarda tudo em memória e faz milhares de `INCR` por segundo. Os
+  contadores são descartáveis (expiram em 1 minuto), então não precisam de disco nem de backup.
+- **Senha mesmo na rede interna.** Defesa em profundidade: se outro container da rede for
+  comprometido, ainda precisa da senha.
+
 ---
 
 ## Perguntas de entrevista
@@ -884,3 +921,8 @@ Resposta igual para qualquer e-mail, envio assíncrono para não vazar pelo temp
 256 bits guardado como hash, validade de 30 minutos, uso único com UPDATE atômico, link com endereço
 fixo (contra host header injection) e, depois da troca, um security stamp novo que derruba todas as
 sessões.
+
+**Como o rate limit funciona com várias réplicas?**
+O contador fica no Redis: um script Lua faz INCR e define a expiração atomicamente, então todas as
+réplicas somam no mesmo lugar. Se o Redis cair, cada réplica volta ao limitador em memória e a API
+continua no ar.
