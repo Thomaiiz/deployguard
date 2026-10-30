@@ -62,6 +62,8 @@ services:
       # aponte para um SMTP de verdade com TLS (SMTP_SECURITY=StartTls) e usuário/senha no .env.
       Email__SmtpHost: ${SMTP_HOST:-mailpit}
       Email__SmtpPort: ${SMTP_PORT:-1025}
+      # "None" (sem TLS) só é aceito para o Mailpit. Com SMTP_HOST de verdade, a API não sobe
+      # enquanto SMTP_SECURITY não for StartTls ou SslOnConnect.
       Email__Security: ${SMTP_SECURITY:-None}
       Email__Username: ${SMTP_USERNAME:-}
       Email__Password: ${SMTP_PASSWORD:-}

@@ -805,6 +805,30 @@ handlers, e é onde registramos o handler seguro com nome (`"health-checks"`).
 - **Simular IP nos testes.** O servidor de teste não tem IP de cliente. Um `IStartupFilter` só dos
   testes lê o cabeçalho `X-Test-Client-Ip` e define o IP da requisição.
 
+## Etapa 19: e-mail só com TLS (correção da auditoria)
+
+### O que mudou
+
+- A auditoria achou o **SEC-002**: o compose usa `SMTP_SECURITY=None` por padrão (para o Mailpit).
+  Quem configurasse um SMTP de verdade e esquecesse essa variável mandaria a senha do SMTP e o link
+  de "esqueci minha senha" sem criptografia.
+- Agora a API **não sobe** nesse caso. Sem TLS só vale para um servidor local de teste
+  (`localhost`, loopback ou nome sem ponto, como `mailpit`) e sem usuário/senha.
+- O README ganhou a seção "Antes de expor fora da sua máquina" (HTTPS, SMTP real, `DASHBOARD_URL`),
+  que era a observação INF-007 da auditoria.
+
+### Conceitos
+
+- **STARTTLS e ataque de downgrade.** No SMTP, a conexão começa em texto puro e o cliente pede
+  "vamos para TLS" (STARTTLS). Se o servidor não oferecer, os modos `Auto` e
+  `StartTlsWhenAvailable` seguem **sem** criptografia. Um atacante no meio do caminho só precisa
+  apagar a palavra STARTTLS da resposta do servidor. Por isso só `StartTls` (exige) e
+  `SslOnConnect` (TLS desde o primeiro byte) são aceitos.
+- **Falhar na subida (fail fast).** É melhor a API não subir, com uma mensagem clara, do que subir
+  e vazar segredos em silêncio. É o mesmo padrão da chave JWT curta.
+- **Configuração segura por padrão.** O valor padrão serve para o caso de teste, mas a validação
+  impede que ele seja usado no caso real.
+
 ---
 
 ## Perguntas de entrevista
@@ -967,3 +991,8 @@ continua no ar.
 O bloqueio é por par conta e IP: quem erra a senha de propósito tranca só o próprio IP, e o dono
 entra de outro lugar. Para ataques espalhados por muitos IPs existe um teto por conta bem mais alto.
 Os contadores sobem com um upsert atômico, e o bloqueio é temporário.
+
+**Por que a API se recusa a subir com SMTP sem TLS?**
+Porque o e-mail de recuperação carrega um token que dá acesso à conta, e o login do SMTP é um
+segredo. Os modos "TLS se disponível" podem ser rebaixados por quem está no meio do caminho. Sem TLS
+só é aceito para um servidor local de teste, como o Mailpit.

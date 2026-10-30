@@ -72,6 +72,9 @@ public static class EmailServiceCollectionExtensions
         services.AddOptions<EmailOptions>()
             .Bind(configuration.GetSection(EmailOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(EmailOptions.IsTransportSafe,
+                "Email:Security sem TLS só é aceito para um servidor local de teste (como o Mailpit), sem usuário. "
+                + "Para um SMTP de verdade use StartTls (porta 587) ou SslOnConnect (porta 465).")
             .ValidateOnStart();
 
         services.AddSingleton<IEmailSender, SmtpEmailSender>();
