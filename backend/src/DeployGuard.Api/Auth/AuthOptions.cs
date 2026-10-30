@@ -32,9 +32,16 @@ public sealed class AuthOptions
 
     public string? BootstrapAdminPassword { get; set; }
 
-    /// <summary>Tentativas erradas seguidas antes de bloquear a conta.</summary>
+    /// <summary>Tentativas erradas seguidas de um mesmo IP antes de bloquear esse IP nessa conta.</summary>
     [Range(3, 20)]
     public int MaxFailedLogins { get; set; } = 5;
+
+    /// <summary>
+    /// Teto por conta, somando todos os IPs: freia um ataque espalhado por muitos endereços.
+    /// Alto de propósito, para que um único atacante não consiga trancar o dono da conta.
+    /// </summary>
+    [Range(10, 1000)]
+    public int MaxFailedLoginsPerAccount { get; set; } = 50;
 
     /// <summary>
     /// Duração do bloqueio. Temporário de propósito: um bloqueio permanente deixaria qualquer

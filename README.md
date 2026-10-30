@@ -21,7 +21,8 @@ Funcionalidades atuais:
   as verificações e os alertas pelo banco (`FOR UPDATE SKIP LOCKED`), sem verificar nada em dobro,
   e os avisos ao vivo chegam a todas pelo `LISTEN/NOTIFY` do PostgreSQL.
 - **Etapa 7:** **conta e segurança do login**. Cada usuário troca a própria senha (e as outras
-  sessões caem na hora), a conta é bloqueada por 15 minutos depois de 5 senhas erradas seguidas, e
+  sessões caem na hora), 5 senhas erradas seguidas bloqueiam aquele IP naquela conta por 15
+  minutos (e 50 erradas somando todos os IPs bloqueiam a conta inteira), e
   um **registro de auditoria** mostra ao Admin quem fez o quê, quando e de qual IP.
 - **Etapa 8:** **página de status pública** em `/status`, aberta sem login. O Admin escolhe quais
   aplicações aparecem, e o visitante vê só o nome, a situação e uma barra por dia com a
@@ -577,11 +578,17 @@ Exceções são explícitas e por nome: `AllowedPrivateHosts` (no Compose, só `
   navegadores caem, e a sessão de quem trocou recebe um cookie novo.
 - **Contra força bruta e enumeração.** Duas camadas:
   - **Por IP:** login limitado a 5 tentativas por minuto (rate limit).
-  - **Por conta:** depois de 5 senhas erradas seguidas, a conta fica bloqueada por 15 minutos,
-    mesmo para a senha certa e mesmo vindo de outro IP (protege contra ataques distribuídos). O
-    bloqueio é temporário de propósito: um bloqueio permanente deixaria qualquer um trancar a conta
-    de outra pessoa errando a senha. O Admin pode desbloquear antes. O contador sobe num único
-    `UPDATE` atômico, então tentativas simultâneas (ou em réplicas diferentes) não se perdem.
+  - **Por conta e IP:** depois de 5 senhas erradas seguidas vindas do mesmo IP, **esse IP** fica
+    bloqueado nessa conta por 15 minutos, mesmo com a senha certa. O dono da conta, entrando de
+    outro lugar, não é afetado: antes o bloqueio era da conta inteira, e qualquer pessoa que
+    soubesse o e-mail do Admin conseguia trancá-lo para sempre errando a senha de propósito
+    (achado SEC-001 da auditoria de segurança).
+  - **Teto por conta:** 50 senhas erradas somando todos os IPs bloqueiam a conta inteira por 15
+    minutos. É o freio contra um ataque espalhado por muitos endereços, alto o bastante para um
+    único atacante não trancar o dono.
+  - Os bloqueios são temporários. O Admin pode desbloquear antes, e o "esqueci minha senha" também
+    libera. Os contadores sobem em comandos atômicos (`INSERT ... ON CONFLICT` e `UPDATE`), então
+    tentativas simultâneas (ou em réplicas diferentes) não se perdem.
   - A resposta é **idêntica** para e-mail inexistente, senha errada e conta bloqueada, inclusive no
     tempo (a API calcula um hash mesmo quando o e-mail não existe). Quem ataca não descobre quais
     contas existem nem quais estão bloqueadas.
